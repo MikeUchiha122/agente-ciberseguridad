@@ -4,7 +4,8 @@
 ![Python](https://img.shields.io/badge/Python-3.12-blue?logo=python)
 ![Claude](https://img.shields.io/badge/Powered%20by-Claude%20AI-orange)
 ![License](https://img.shields.io/badge/Uso-Ético%20y%20Defensivo-green)
-[![Portfolio Demo](https://img.shields.io/badge/Portfolio-Demo%20en%20vivo-green)](https://mikeuchiha122.github.io/agente-ciberseguridad/)
+[![Portfolio Demo](https://img.shields.io/badge/Portfolio-Demo%20en%20vivo-green)](https://mikeuchiha122.github.io/agente-cibersegui/)
+[![Invítame un café](https://img.shields.io/badge/Invítame%20un%20café-Gracias!-orange)](https://paypal.me/MikeUchiha122)
 
 **Autor:** Miguel Ángel Ramírez Galicia — [@MikeUchiha122](https://github.com/MikeUchiha122)
 
