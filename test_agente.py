@@ -203,7 +203,7 @@ class TestSanitizador(unittest.TestCase):
         """
         Ataque clásico de SQL injection. Lo peligroso son los
         caracteres especiales: ; ' " -- que separan comandos SQL.
-        Las palabras como DROP son letras normales (\w) y pasan,
+        Las palabras como DROP son letras normales y pasan,
         pero sin ; son completamente inofensivas.
         """
         malicioso = "8.8.8.8'; DROP TABLE usuarios; --"
@@ -1225,6 +1225,159 @@ class TestGuardarReporteYHistorial(unittest.TestCase):
 
 
 # ═══════════════════════════════════════════════════════════
+#  BLOQUE 13: VALIDAR URL (opción 2 del menú)
+#  ¿La validación de URL rechaza inputs inválidos
+#  y acepta URLs reales correctamente?
+# ═══════════════════════════════════════════════════════════
+
+class TestValidarURL(unittest.TestCase):
+    """
+    Probamos validar_url — la función que protege la opción 2
+    del menú antes de pasarle cualquier cosa al agente.
+    """
+
+    # ── URLs válidas — deben pasar ───────────────────────────
+
+    def test_url_https_completa(self):
+        """Una URL completa con https debe ser válida"""
+        from agente import validar_url
+        ok, _ = validar_url("https://google.com")
+        self.assertTrue(ok)
+
+    def test_url_http_completa(self):
+        """Una URL con http también debe ser válida"""
+        from agente import validar_url
+        ok, _ = validar_url("http://sitio.com")
+        self.assertTrue(ok)
+
+    def test_url_sin_esquema_se_completa(self):
+        """Si falta https://, la función lo agrega y es válida"""
+        from agente import validar_url
+        ok, url_limpia = validar_url("google.com")
+        self.assertTrue(ok)
+        self.assertTrue(url_limpia.startswith("https://"))
+
+    def test_url_con_path(self):
+        """URL con ruta larga debe ser válida"""
+        from agente import validar_url
+        ok, _ = validar_url("https://banco.com/login/verificar?token=abc")
+        self.assertTrue(ok)
+
+    def test_url_con_subdominio(self):
+        """URL con subdominios debe ser válida"""
+        from agente import validar_url
+        ok, _ = validar_url("https://mail.google.com")
+        self.assertTrue(ok)
+
+    def test_url_dominio_mx(self):
+        """Dominios .mx deben ser válidos"""
+        from agente import validar_url
+        ok, _ = validar_url("https://sat.gob.mx")
+        self.assertTrue(ok)
+
+    def test_url_retorna_url_limpia(self):
+        """El segundo valor del tuple debe ser la URL lista para usar"""
+        from agente import validar_url
+        ok, url_limpia = validar_url("bbva.mx")
+        self.assertTrue(ok)
+        self.assertEqual(url_limpia, "https://bbva.mx")
+
+    # ── URLs inválidas — deben ser rechazadas ────────────────
+
+    def test_url_vacia_rechazada(self):
+        """URL vacía debe ser rechazada con mensaje claro"""
+        from agente import validar_url
+        ok, mensaje = validar_url("")
+        self.assertFalse(ok)
+        self.assertIsInstance(mensaje, str)
+        self.assertGreater(len(mensaje), 5)
+
+    def test_url_solo_espacios_rechazada(self):
+        """Solo espacios debe ser rechazado"""
+        from agente import validar_url
+        ok, _ = validar_url("     ")
+        self.assertFalse(ok)
+
+    def test_url_solo_esquema_rechazada(self):
+        """'https://' sin dominio debe ser rechazado"""
+        from agente import validar_url
+        ok, mensaje = validar_url("https://")
+        self.assertFalse(ok)
+        self.assertGreater(len(mensaje), 5)
+
+    def test_url_http_solo_rechazada(self):
+        """'http://' sin dominio debe ser rechazado"""
+        from agente import validar_url
+        ok, _ = validar_url("http://")
+        self.assertFalse(ok)
+
+    def test_url_texto_libre_rechazado(self):
+        """Texto sin punto no es URL válida"""
+        from agente import validar_url
+        ok, mensaje = validar_url("esto no es una url")
+        self.assertFalse(ok)
+
+    def test_url_solo_palabra_rechazada(self):
+        """Una sola palabra sin punto ni esquema debe ser rechazada"""
+        from agente import validar_url
+        ok, _ = validar_url("google")
+        self.assertFalse(ok)
+
+    def test_url_con_espacios_en_dominio_rechazada(self):
+        """Dominios con espacios son inválidos"""
+        from agente import validar_url
+        ok, _ = validar_url("https://banco seguro.com")
+        self.assertFalse(ok)
+
+    def test_url_demasiado_larga_rechazada(self):
+        """URLs de más de 300 caracteres deben ser rechazadas"""
+        from agente import validar_url
+        url_gigante = "https://" + "a" * 300 + ".com"
+        ok, mensaje = validar_url(url_gigante)
+        self.assertFalse(ok)
+        self.assertIn("larga", mensaje.lower())
+
+    def test_url_puntos_consecutivos_rechazada(self):
+        """Dominios con puntos consecutivos son inválidos"""
+        from agente import validar_url
+        ok, _ = validar_url("https://banco..com")
+        self.assertFalse(ok)
+
+    # ── El mensaje de error siempre debe ser útil ────────────
+
+    def test_mensaje_error_es_string_legible(self):
+        """Todos los errores deben ser strings con texto útil"""
+        from agente import validar_url
+        casos_invalidos = ["", "   ", "https://", "sinpunto", "a" * 400]
+        for caso in casos_invalidos:
+            with self.subTest(caso=caso[:30]):
+                ok, mensaje = validar_url(caso)
+                self.assertFalse(ok)
+                self.assertIsInstance(mensaje, str)
+                self.assertGreater(len(mensaje), 5,
+                    f"El mensaje de error para '{caso[:20]}' está vacío")
+
+    def test_siempre_retorna_tuple(self):
+        """validar_url SIEMPRE debe retornar (bool, str), nunca crashear"""
+        from agente import validar_url
+        inputs_raros = [
+            "", "   ", "https://", "http://", "ftp://raro.com",
+            "💀.com", "../../../etc", "javascript:alert(1)",
+            "file:///etc/passwd", None if False else "",
+        ]
+        for inp in inputs_raros:
+            with self.subTest(inp=inp[:30] if inp else "''"):
+                try:
+                    resultado = validar_url(inp)
+                    self.assertIsInstance(resultado, tuple)
+                    self.assertEqual(len(resultado), 2)
+                    self.assertIsInstance(resultado[0], bool)
+                    self.assertIsInstance(resultado[1], str)
+                except Exception as e:
+                    self.fail(f"validar_url('{inp}') crasheó: {e}")
+
+
+# ═══════════════════════════════════════════════════════════
 #  RUNNER PERSONALIZADO
 #  Muestra los resultados de forma bonita y clara
 # ═══════════════════════════════════════════════════════════
@@ -1285,6 +1438,7 @@ if __name__ == "__main__":
         ("BLOQUE 10: verificar_ssl",           TestVerificarSSL),
         ("BLOQUE 11: verificar_redireccion",   TestVerificarRedireccion),
         ("BLOQUE 12: reportes e historial",    TestGuardarReporteYHistorial),
+        ("BLOQUE 13: validar_url (opción 2)",  TestValidarURL),
     ]
 
     total_ok  = 0

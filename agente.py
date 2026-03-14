@@ -58,6 +58,58 @@ def sanitizar(texto):
     texto = re.sub(r'[^\w\s\.\-\:\/\?\=\%]', '', texto.strip())
     return texto[:300]
 
+def validar_url(url: str) -> tuple[bool, str]:
+    """
+    Valida que una URL sea real y analizable antes de procesarla.
+    Retorna (es_valida, mensaje_de_error_o_url_limpia).
+
+    Reglas:
+    - No puede estar vacía ni ser solo espacios
+    - Debe tener un dominio con al menos un punto
+    - No puede ser solo 'http://' o 'https://' sin dominio
+    - El dominio no puede tener espacios
+    - Longitud máxima de 300 caracteres
+    - No puede ser solo números sin estructura de URL
+    """
+    if not url or not url.strip():
+        return False, "La URL no puede estar vacía."
+
+    url = url.strip()
+
+    if len(url) > 300:
+        return False, "La URL es demasiado larga (máximo 300 caracteres)."
+
+    # Agregar esquema si no tiene
+    if not url.startswith("http"):
+        url = "https://" + url
+
+    parsed = urlparse(url)
+    dominio = parsed.netloc or parsed.path
+
+    # Sin dominio después del esquema
+    if not dominio or dominio in ("", "/"):
+        return False, "No se encontró un dominio válido en la URL."
+
+    # Solo http:// o https:// sin nada más
+    if url.rstrip("/") in ("http://", "https://"):
+        return False, "La URL está incompleta, falta el dominio."
+
+    # El dominio tiene espacios
+    if " " in dominio:
+        return False, "El dominio no puede tener espacios."
+
+    # El dominio no tiene punto (ej: 'https://localhost' o texto libre)
+    dominio_limpio = dominio.split(":")[0]  # quitar puerto si hay
+    if "." not in dominio_limpio:
+        return False, f"'{dominio_limpio}' no parece un dominio válido (le falta el punto, ej: .com .mx)."
+
+    # Dominio demasiado corto (ej: 'a.b')
+    partes = dominio_limpio.split(".")
+    if any(len(p) == 0 for p in partes):
+        return False, "El dominio tiene puntos consecutivos o mal formados."
+
+    return True, url
+
 # ═══════════════════════════════════════════════════
 #  HTTP SEGURO
 # ═══════════════════════════════════════════════════
@@ -815,18 +867,24 @@ if __name__ == "__main__":
 
         elif opcion == "2":
             print("\n  Pega la URL que quieres verificar antes de entrar.")
-            print("  Ejemplo: https://bbva-login-seguro.com/acceso\n")
+            print("  Ejemplos válidos:")
+            print("    https://bbva-login-seguro.com/acceso")
+            print("    paypal-verify.net")
+            print("    http://sitio-sospechoso.com\n")
             url = input("  🔗 URL a verificar: ").strip()
-            if url:
-                if not url.startswith("http"):
-                    url = "https://" + url
-                resultado = analizar(url)
+
+            es_valida, resultado_validacion = validar_url(url)
+
+            if not es_valida:
+                print(f"\n  ⚠️  URL inválida: {resultado_validacion}")
+                print("  Ingresa una URL real, por ejemplo: https://sitio.com\n")
+            else:
+                url_limpia = resultado_validacion
+                resultado = analizar(url_limpia)
                 if resultado:
                     guardar = input("  ¿Guardar reporte? (s/n): ").strip().lower()
                     if guardar == "s":
                         guardar_reporte(resultado)
-            else:
-                print("  ⚠️  Escribe una URL.\n")
 
         elif opcion == "3":
             ver_historial()
