@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agente de Ciberseguridad — MikeUchiha122</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:       #0a0c0f;
+    --bg2:      #0f1318;
+    --bg3:      #141920;
+    --border:   #1e2730;
+    --border2:  #263040;
+    --green:    #00d46a;
+    --green2:   #00a352;
+    --green-dim:#003d20;
+    --red:      #ff4444;
+    --red-dim:  #3d0f0f;
+    --amber:    #ffaa00;
+    --amber-dim:#3d2800;
+    --blue:     #4db8ff;
+    --blue-dim: #0a2a3d;
+    --text:     #e8edf2;
+    --text2:    #8899aa;
+    --text3:    #4a5a6a;
+    --mono:     'IBM Plex Mono', monospace;
+    --sans:     'IBM Plex Sans', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.7;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* GRID BG */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(var(--border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border) 1px, transparent 1px);
+    background-size: 48px 48px;
+    opacity: 0.35;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .wrap { position: relative; z-index: 1; max-width: 920px; margin: 0 auto; padding: 0 24px; }
+
+  /* NAV */
+  nav {
+    position: sticky; top: 0; z-index: 100;
+    background: rgba(10,12,15,0.85);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 0;
+  }
+  nav .wrap { display: flex; align-items: center; justify-content: space-between; }
+  .nav-logo { font-family: var(--mono); font-size: 13px; color: var(--green); font-weight: 600; letter-spacing: 0.05em; }
+  .nav-logo span { color: var(--text2); }
+  .nav-links { display: flex; gap: 24px; }
+  .nav-links a { font-size: 13px; color: var(--text2); text-decoration: none; font-family: var(--mono); transition: color .2s; }
+  .nav-links a:hover { color: var(--green); }
+  .nav-status { display: flex; align-items: center; gap: 7px; font-size: 12px; font-family: var(--mono); color: var(--green); }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  /* HERO */
+  .hero { padding: 100px 0 80px; border-bottom: 1px solid var(--border); }
+  .hero-tag { display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 11px; color: var(--green2); background: var(--green-dim); border: 1px solid var(--green2); padding: 5px 14px; border-radius: 2px; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 32px; }
+  .hero h1 { font-size: clamp(32px, 5vw, 52px); font-weight: 300; color: var(--text); line-height: 1.15; margin-bottom: 20px; }
+  .hero h1 em { font-style: normal; color: var(--green); font-weight: 500; }
+  .hero-sub { font-size: 16px; color: var(--text2); max-width: 560px; margin-bottom: 40px; line-height: 1.7; }
+  .hero-cta { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 60px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 22px; border-radius: 3px; font-size: 13px; font-family: var(--mono); font-weight: 500; cursor: pointer; text-decoration: none; transition: all .2s; border: 1px solid transparent; }
+  .btn-primary { background: var(--green); color: #000; }
+  .btn-primary:hover { background: #00ff80; }
+  .btn-outline { background: transparent; color: var(--green); border-color: var(--green2); }
+  .btn-outline:hover { background: var(--green-dim); }
+  .hero-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+  .stat { background: var(--bg2); padding: 20px; text-align: center; }
+  .stat-num { font-family: var(--mono); font-size: 28px; font-weight: 600; color: var(--green); display: block; }
+  .stat-label { font-size: 11px; color: var(--text3); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.06em; }
+
+  /* SECTIONS */
+  section { padding: 80px 0; border-bottom: 1px solid var(--border); }
+  .sec-header { display: flex; align-items: center; gap: 12px; margin-bottom: 40px; }
+  .sec-num { font-family: var(--mono); font-size: 11px; color: var(--text3); }
+  .sec-title { font-size: 13px; font-weight: 500; color: var(--text2); text-transform: uppercase; letter-spacing: 0.1em; }
+  .sec-line { flex: 1; height: 1px; background: var(--border); }
+
+  /* DEMO TERMINAL */
+  .terminal-wrapper { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .terminal-header { display: flex; align-items: center; gap: 7px; padding: 12px 16px; background: var(--bg3); border-bottom: 1px solid var(--border); }
+  .t-btn { width: 11px; height: 11px; border-radius: 50%; }
+  .t-r { background: #ff5f57; } .t-y { background: #ffbd2e; } .t-g { background: #28c840; }
+  .terminal-filename { font-family: var(--mono); font-size: 12px; color: var(--text3); margin-left: 8px; }
+  .terminal-body { padding: 20px; font-family: var(--mono); font-size: 13px; min-height: 200px; line-height: 1.8; }
+  .t-line { display: block; }
+  .t-prompt { color: var(--green); }
+  .t-gray { color: var(--text3); }
+  .t-white { color: var(--text); }
+  .t-green { color: var(--green); }
+  .t-red { color: var(--red); }
+  .t-amber { color: var(--amber); }
+  .t-blue { color: var(--blue); }
+
+  .demo-controls { margin-top: 16px; }
+  .demo-input-row { display: flex; gap: 10px; }
+  .demo-input { flex: 1; background: var(--bg2); border: 1px solid var(--border2); border-radius: 3px; padding: 10px 14px; font-family: var(--mono); font-size: 13px; color: var(--text); outline: none; transition: border-color .2s; }
+  .demo-input:focus { border-color: var(--green2); }
+  .demo-input::placeholder { color: var(--text3); }
+  .demo-run { background: var(--green); color: #000; border: none; padding: 10px 20px; border-radius: 3px; font-family: var(--mono); font-size: 13px; font-weight: 600; cursor: pointer; transition: background .2s; white-space: nowrap; }
+  .demo-run:hover { background: #00ff80; }
+  .demo-presets { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+  .preset-label { font-size: 11px; color: var(--text3); font-family: var(--mono); }
+  .preset { font-family: var(--mono); font-size: 11px; padding: 4px 11px; background: transparent; border: 1px solid var(--border2); border-radius: 2px; color: var(--text2); cursor: pointer; transition: all .15s; }
+  .preset:hover { border-color: var(--green2); color: var(--green); background: var(--green-dim); }
+
+  /* RESULT CARD */
+  .result-card { margin-top: 16px; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; display: none; }
+  .result-card.show { display: block; animation: fadeIn .3s ease; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  .result-header { display: flex; align-items: center; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+  .result-badge { font-family: var(--mono); font-size: 11px; font-weight: 600; padding: 4px 12px; border-radius: 2px; letter-spacing: 0.08em; text-transform: uppercase; }
+  .badge-danger { background: var(--red-dim); color: var(--red); border: 1px solid var(--red); }
+  .badge-success { background: var(--green-dim); color: var(--green); border: 1px solid var(--green2); }
+  .badge-warning { background: var(--amber-dim); color: var(--amber); border: 1px solid var(--amber); }
+  .result-title { font-size: 14px; color: var(--text); font-weight: 400; }
+  .result-tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--border); border-bottom: 1px solid var(--border); }
+  .rtool { background: var(--bg); padding: 14px 16px; }
+  .rtool-name { font-family: var(--mono); font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 5px; }
+  .rtool-val { font-family: var(--mono); font-size: 15px; font-weight: 600; color: var(--text); }
+  .rtool-sub { font-size: 11px; color: var(--text3); margin-top: 2px; }
+  .result-summary { padding: 16px 20px; }
+  .result-summary-label { font-family: var(--mono); font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 8px; }
+  .result-summary-text { font-size: 13px; color: var(--text2); line-height: 1.7; }
+
+  /* TOOLS GRID */
+  .tools-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+  .tool-card { background: var(--bg2); padding: 20px; transition: background .2s; }
+  .tool-card:hover { background: var(--bg3); }
+  .tool-icon { font-size: 20px; margin-bottom: 10px; }
+  .tool-name { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 5px; }
+  .tool-desc { font-size: 12px; color: var(--text2); line-height: 1.6; }
+  .tool-free { display: inline-block; margin-top: 8px; font-family: var(--mono); font-size: 10px; color: var(--green2); background: var(--green-dim); padding: 2px 8px; border-radius: 2px; }
+  .tool-key { display: inline-block; margin-top: 8px; font-family: var(--mono); font-size: 10px; color: var(--text3); background: var(--bg); padding: 2px 8px; border-radius: 2px; border: 1px solid var(--border2); }
+
+  /* ARCH FLOW */
+  .arch-flow { display: flex; align-items: stretch; gap: 0; overflow-x: auto; padding-bottom: 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg2); }
+  .arch-step { flex: 1; min-width: 120px; padding: 24px 16px; text-align: center; border-right: 1px solid var(--border); position: relative; }
+  .arch-step:last-child { border-right: none; }
+  .arch-step::after { content: '→'; position: absolute; right: -10px; top: 50%; transform: translateY(-50%); font-family: var(--mono); color: var(--text3); font-size: 14px; z-index: 1; }
+  .arch-step:last-child::after { display: none; }
+  .arch-icon { font-size: 22px; margin-bottom: 10px; }
+  .arch-label { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+  .arch-sub { font-size: 11px; color: var(--text3); }
+
+  /* TESTS BARS */
+  .tests-grid { display: flex; flex-direction: column; gap: 10px; }
+  .test-row { display: flex; align-items: center; gap: 12px; }
+  .test-name { font-family: var(--mono); font-size: 12px; color: var(--text2); width: 180px; flex-shrink: 0; }
+  .test-track { flex: 1; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .test-fill { height: 100%; background: var(--green2); border-radius: 2px; transition: width 1s ease; }
+  .test-count { font-family: var(--mono); font-size: 12px; color: var(--green); width: 28px; text-align: right; flex-shrink: 0; }
+  .tests-total { margin-top: 20px; padding: 14px 18px; background: var(--green-dim); border: 1px solid var(--green2); border-radius: 4px; display: flex; align-items: center; justify-content: space-between; }
+  .tests-total-label { font-family: var(--mono); font-size: 13px; color: var(--green); }
+  .tests-total-num { font-family: var(--mono); font-size: 20px; font-weight: 600; color: var(--green); }
+
+  /* ABOUT */
+  .about-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .about-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 4px; padding: 24px; }
+  .about-card-title { font-family: var(--mono); font-size: 12px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 12px; }
+  .about-card p { font-size: 13px; color: var(--text2); line-height: 1.7; }
+  .stack-list { display: flex; flex-wrap: wrap; gap: 8px; }
+  .stack-tag { font-family: var(--mono); font-size: 11px; padding: 5px 11px; border: 1px solid var(--border2); border-radius: 2px; color: var(--text2); }
+
+  /* FOOTER */
+  footer { padding: 48px 0; }
+  footer .wrap { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
+  .footer-left { font-family: var(--mono); font-size: 12px; color: var(--text3); }
+  .footer-left strong { color: var(--green); font-weight: 500; }
+  .footer-links { display: flex; gap: 16px; }
+  .footer-links a { font-family: var(--mono); font-size: 12px; color: var(--text3); text-decoration: none; transition: color .2s; }
+  .footer-links a:hover { color: var(--green); }
+
+  @media (max-width: 640px) {
+    .hero-stats { grid-template-columns: repeat(2, 1fr); }
+    .tools-grid { grid-template-columns: repeat(2, 1fr); }
+    .result-tools { grid-template-columns: 1fr; }
+    .about-grid { grid-template-columns: 1fr; }
+    .nav-links { display: none; }
+    .arch-flow { flex-direction: column; }
+    .arch-step { border-right: none; border-bottom: 1px solid var(--border); }
+    .arch-step::after { content: '↓'; right: auto; top: auto; bottom: -10px; left: 50%; transform: translateX(-50%); }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <div class="nav-logo">MikeUchiha122<span>/agente-ciberseguridad</span></div>
+    <div class="nav-links">
+      <a href="#demo">Demo</a>
+      <a href="#herramientas">Herramientas</a>
+      <a href="#arquitectura">Arquitectura</a>
+      <a href="#tests">Tests</a>
+    </div>
+    <div class="nav-status"><span class="status-dot"></span>120/120 tests</div>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <div class="hero">
+    <div class="hero-tag">▸ Proyecto de portafolio · 2026</div>
+    <h1>Agente de <em>Ciberseguridad</em><br>con Inteligencia Artificial</h1>
+    <p class="hero-sub">Analiza IPs, dominios, hashes y URLs contra múltiples fuentes de inteligencia de forma autónoma. Detecta phishing antes de ingresar datos sensibles. Impulsado por Claude AI con el patrón ReAct.</p>
+    <div class="hero-cta">
+      <a href="https://github.com/MikeUchiha122/agente-ciberseguridad" target="_blank" class="btn btn-primary">Ver código en GitHub</a>
+      <a href="#demo" class="btn btn-outline">Ver demo interactivo</a>
+    </div>
+    <div class="hero-stats">
+      <div class="stat"><span class="stat-num">9</span><span class="stat-label">Fuentes integradas</span></div>
+      <div class="stat"><span class="stat-num">120</span><span class="stat-label">Tests automatizados</span></div>
+      <div class="stat"><span class="stat-num">90+</span><span class="stat-label">Motores antivirus</span></div>
+      <div class="stat"><span class="stat-num">v3.0</span><span class="stat-label">Versión actual</span></div>
+    </div>
+  </div>
+
+  <section id="demo">
+    <div class="sec-header">
+      <span class="sec-num">01</span>
+      <span class="sec-title">Demo interactivo</span>
+      <div class="sec-line"></div>
+    </div>
+
+    <div class="terminal-wrapper">
+      <div class="terminal-header">
+        <span class="t-btn t-r"></span>
+        <span class="t-btn t-y"></span>
+        <span class="t-btn t-g"></span>
+        <span class="terminal-filename">agente.py — MikeUchiha122</span>
+      </div>
+      <div class="terminal-body" id="term"></div>
+    </div>
+
+    <div class="demo-controls">
+      <div class="demo-input-row">
+        <input class="demo-input" id="target" placeholder="Ej: 45.33.32.156  o  https://bbva-login-secure.tk" />
+        <button class="demo-run" onclick="runDemo()">Analizar</button>
+      </div>
+      <div class="demo-presets">
+        <span class="preset-label">Ejemplos:</span>
+        <button class="preset" onclick="pick('45.33.32.156','ip')">45.33.32.156</button>
+        <button class="preset" onclick="pick('google.com','domain')">google.com</button>
+        <button class="preset" onclick="pick('https://bbva-login-secure.tk/acceso','phishing')">bbva-login-secure.tk</button>
+        <button class="preset" onclick="pick('d41d8cd98f00b204e9800998ecf8427e','hash')">hash MD5</button>
+      </div>
+    </div>
+
+    <div class="result-card" id="result-card">
+      <div class="result-header">
+        <div class="result-badge" id="rbadge"></div>
+        <div class="result-title" id="rtitle"></div>
+      </div>
+      <div class="result-tools" id="rtools"></div>
+      <div class="result-summary">
+        <div class="result-summary-label">Resumen para todos</div>
+        <div class="result-summary-text" id="rsummary"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="herramientas">
+    <div class="sec-header">
+      <span class="sec-num">02</span>
+      <span class="sec-title">Herramientas integradas</span>
+      <div class="sec-line"></div>
+    </div>
+    <div class="tools-grid">
+      <div class="tool-card"><div class="tool-icon">🦠</div><div class="tool-name">VirusTotal</div><div class="tool-desc">90+ motores antivirus. Verifica IPs, dominios, hashes y URLs.</div><span class="tool-key">API key gratis</span></div>
+      <div class="tool-card"><div class="tool-icon">🚨</div><div class="tool-name">AbuseIPDB</div><div class="tool-desc">Historial de reportes de abuso de una IP en los últimos 90 días.</div><span class="tool-key">API key gratis</span></div>
+      <div class="tool-card"><div class="tool-icon">🌍</div><div class="tool-name">IPInfo</div><div class="tool-desc">Geolocalización, ISP y detección de VPN o nodos Tor.</div><span class="tool-free">Sin key</span></div>
+      <div class="tool-card"><div class="tool-icon">🔍</div><div class="tool-name">NIST NVD</div><div class="tool-desc">Vulnerabilidades conocidas (CVEs) por software y versión.</div><span class="tool-free">Sin key</span></div>
+      <div class="tool-card"><div class="tool-icon">🔒</div><div class="tool-name">SSL/TLS</div><div class="tool-desc">Validez, emisor y antigüedad del certificado sin cargar el sitio.</div><span class="tool-free">Sin key</span></div>
+      <div class="tool-card"><div class="tool-icon">🎣</div><div class="tool-name">Anti-Phishing</div><div class="tool-desc">Typosquatting, marcas suplantadas y patrones de fraude en la URL.</div><span class="tool-free">Sin key</span></div>
+      <div class="tool-card"><div class="tool-icon">↪️</div><div class="tool-name">Redirecciones</div><div class="tool-desc">Destino real de URLs acortadas o con redirecciones maliciosas.</div><span class="tool-free">Sin key</span></div>
+      <div class="tool-card"><div class="tool-icon">🗺️</div><div class="tool-name">Subdominios</div><div class="tool-desc">Mapeo pasivo de subdominios via Certificate Transparency.</div><span class="tool-free">Sin key</span></div>
+      <div class="tool-card"><div class="tool-icon">📋</div><div class="tool-name">WHOIS/RDAP</div><div class="tool-desc">Registro, edad y estado de un dominio en tiempo real.</div><span class="tool-free">Sin key</span></div>
+    </div>
+  </section>
+
+  <section id="arquitectura">
+    <div class="sec-header">
+      <span class="sec-num">03</span>
+      <span class="sec-title">Arquitectura — patrón ReAct</span>
+      <div class="sec-line"></div>
+    </div>
+    <div class="arch-flow">
+      <div class="arch-step"><div class="arch-icon">⌨️</div><div class="arch-label">Input</div><div class="arch-sub">IP / URL / hash</div></div>
+      <div class="arch-step"><div class="arch-icon">🧠</div><div class="arch-label">Razona</div><div class="arch-sub">Claude planifica</div></div>
+      <div class="arch-step"><div class="arch-icon">⚙️</div><div class="arch-label">Actúa</div><div class="arch-sub">APIs en paralelo</div></div>
+      <div class="arch-step"><div class="arch-icon">👁️</div><div class="arch-label">Observa</div><div class="arch-sub">Evalúa resultados</div></div>
+      <div class="arch-step"><div class="arch-icon">🔁</div><div class="arch-label">Itera</div><div class="arch-sub">¿Necesita más?</div></div>
+      <div class="arch-step"><div class="arch-icon">📋</div><div class="arch-label">Reporte</div><div class="arch-sub">Técnico + simple</div></div>
+    </div>
+  </section>
+
+  <section id="tests">
+    <div class="sec-header">
+      <span class="sec-num">04</span>
+      <span class="sec-title">Tests de seguridad</span>
+      <div class="sec-line"></div>
+    </div>
+    <div class="tests-grid" id="tests-grid"></div>
+    <div class="tests-total">
+      <span class="tests-total-label">Total — 13 bloques · CI/CD con GitHub Actions</span>
+      <span class="tests-total-num">120 / 120 ✓</span>
+    </div>
+  </section>
+
+  <section id="sobre">
+    <div class="sec-header">
+      <span class="sec-num">05</span>
+      <span class="sec-title">Sobre el proyecto</span>
+      <div class="sec-line"></div>
+    </div>
+    <div class="about-grid">
+      <div class="about-card">
+        <div class="about-card-title">Contexto</div>
+        <p>Proyecto personal desarrollado desde cero para aprender a construir agentes de IA aplicados a ciberseguridad. Incluye validaciones de seguridad, tests automatizados y pipeline CI/CD completo con GitHub Actions.</p>
+      </div>
+      <div class="about-card">
+        <div class="about-card-title">Stack tecnológico</div>
+        <div class="stack-list">
+          <span class="stack-tag">Python 3.12</span>
+          <span class="stack-tag">Claude API</span>
+          <span class="stack-tag">ReAct pattern</span>
+          <span class="stack-tag">VirusTotal API</span>
+          <span class="stack-tag">AbuseIPDB API</span>
+          <span class="stack-tag">GitHub Actions</span>
+          <span class="stack-tag">unittest</span>
+          <span class="stack-tag">requests</span>
+          <span class="stack-tag">python-dotenv</span>
+        </div>
+      </div>
+      <div class="about-card">
+        <div class="about-card-title">Seguridad del código</div>
+        <p>Sanitización de inputs contra SQL injection, XSS y command injection. Validación estricta de URLs antes de procesarlas. Las API keys nunca se exponen en logs ni resultados. Límite de 10 llamadas por análisis.</p>
+      </div>
+      <div class="about-card">
+        <div class="about-card-title">Autor</div>
+        <p><strong style="color:var(--green)">Miguel Ángel Ramírez Galicia</strong><br>
+        Handle: MikeUchiha122<br>
+        Intereses: Ciberseguridad · AI Agents · Python<br><br>
+        <a href="https://github.com/MikeUchiha122" target="_blank" style="color:var(--blue);font-family:var(--mono);font-size:13px;">github.com/MikeUchiha122</a></p>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <div class="wrap">
+    <div class="footer-left">
+      <strong>MikeUchiha122</strong> · Miguel Ángel Ramírez Galicia · 2026
+    </div>
+    <div class="footer-links">
+      <a href="https://github.com/MikeUchiha122/agente-ciberseguridad" target="_blank">GitHub</a>
+      <a href="https://github.com/MikeUchiha122/agente-ciberseguridad/blob/main/README.md" target="_blank">README</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+const SCENARIOS = {
+  ip: {
+    steps: ['$ python agente.py','> Analizando: 45.33.32.156 (IP)','🦠 Verificando en 90+ antivirus...','   → PELIGROSO: 7/90 detecciones','🚨 Revisando reportes de abuso...','   → Score: 85% · 432 reportes (90 días)','🌍 Geolocalización...','   → Ashburn, US · GTHost','🧠 Generando reporte final...'],
+    sc: ['t-prompt','t-blue','t-gray','t-red','t-gray','t-red','t-gray','t-amber','t-green'],
+    verdict: 'danger', vtext: 'PELIGROSO',
+    title: 'IP con actividad maliciosa confirmada',
+    tools: [['VirusTotal','7 / 90','motores detectan malware'],['AbuseIPDB','85%','432 reportes (90 días)'],['IPInfo','Ashburn, US','AS63023 GTHost']],
+    summary: 'Esta IP ha sido reportada 432 veces en los últimos 3 meses por ataques SSH y escaneo de puertos. Si aparece en tus logs, bloquéala inmediatamente.'
+  },
+  domain: {
+    steps: ['$ python agente.py','> Analizando: google.com (dominio)','🦠 Verificando en VirusTotal...','   → LIMPIO: 0/90 detecciones','🗺️  Mapeando subdominios...','   → 20 subdominios encontrados','📋 Consultando WHOIS...','   → Dominio verificado · Google LLC','🧠 Generando reporte final...'],
+    sc: ['t-prompt','t-blue','t-gray','t-green','t-gray','t-green','t-gray','t-green','t-green'],
+    verdict: 'success', vtext: 'LIMPIO',
+    title: 'Dominio legítimo, sin alertas',
+    tools: [['VirusTotal','0 / 90','sin detecciones'],['Subdominios','20','encontrados vía crt.sh'],['WHOIS','Google LLC','dominio verificado']],
+    summary: 'google.com es completamente seguro. Ningún antivirus lo marca como peligroso y pertenece a Google LLC con historial limpio.'
+  },
+  phishing: {
+    steps: ['$ python agente.py','> Analizando URL: bbva-login-secure.tk','🎣 Detectando patrones de phishing...','   → ALERTA: "bbva" en dominio ajeno','   → TLD .tk sospechoso (gratuito)','🔒 Verificando certificado SSL...','   → Let\'s Encrypt · 2 días de antigüedad','🦠 Consultando VirusTotal...','   → 12/90: phishing confirmado','🧠 Veredicto generado...'],
+    sc: ['t-prompt','t-blue','t-gray','t-red','t-red','t-gray','t-amber','t-gray','t-red','t-green'],
+    verdict: 'danger', vtext: 'NO ENTRES',
+    title: 'Phishing confirmado — no ingreses datos',
+    tools: [['Anti-Phishing','CRÍTICO','suplanta a BBVA'],['VirusTotal','12 / 90','phishing confirmado'],['SSL','2 días','certificado sospechoso']],
+    summary: 'Este sitio imita a BBVA pero el dominio real es bbva-login-secure.tk, no bbva.com. Creado hace 2 días, TLD gratuito y 12 antivirus ya lo detectan. No ingreses tu contraseña.'
+  },
+  hash: {
+    steps: ['$ python agente.py','> Analizando hash MD5','🦠 Buscando en VirusTotal...','   → Archivo conocido: 0 bytes','   → LIMPIO: 0/90 detecciones','🔍 Verificando en NIST NVD...','   → Sin CVEs asociados','🧠 Generando reporte final...'],
+    sc: ['t-prompt','t-blue','t-gray','t-amber','t-green','t-gray','t-green','t-green'],
+    verdict: 'success', vtext: 'LIMPIO',
+    title: 'Hash del archivo vacío — sin amenazas',
+    tools: [['VirusTotal','0 / 90','sin detecciones'],['Identificación','Archivo vacío','0 bytes · conocido'],['CVEs','0','sin vulnerabilidades']],
+    summary: 'Este hash corresponde al archivo vacío (0 bytes). Es completamente inofensivo y reconocido por todos los antivirus como archivo limpio.'
+  }
+};
+
+const TESTS_DATA = [
+  ['Validadores',26],['Sanitizador',10],['Anti-Phishing',10],
+  ['Seguridad API Keys',5],['Herramientas Mock',8],['Inputs Maliciosos',6],
+  ['Lógica de Negocio',7],['Estructura Respuestas',5],['buscar_subdominios',7],
+  ['verificar_ssl',5],['verificar_redireccion',7],['Reportes e Historial',6],['validar_url',18]
+];
+
+let curType = 'ip', running = false;
+
+function pick(v, t) {
+  document.getElementById('target').value = v;
+  curType = t;
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function runDemo() {
+  if (running) return;
+  running = true;
+  const inputVal = document.getElementById('target').value.trim();
+  if (!inputVal) { running = false; return; }
+  const type = curType;
+  const s = SCENARIOS[type] || SCENARIOS.ip;
+  const term = document.getElementById('term');
+  const rc = document.getElementById('result-card');
+  rc.classList.remove('show');
+  term.innerHTML = '';
+
+  for (let i = 0; i < s.steps.length; i++) {
+    await sleep(i === 0 ? 100 : 480);
+    const sp = document.createElement('span');
+    sp.className = 't-line ' + s.sc[i];
+    sp.textContent = s.steps[i];
+    term.appendChild(sp);
+    term.scrollTop = term.scrollHeight;
+  }
+
+  await sleep(500);
+  const sp = document.createElement('span');
+  sp.className = 't-line t-green';
+  sp.textContent = '════ ANÁLISIS COMPLETO ════';
+  term.appendChild(sp);
+
+  const badgeClass = { danger: 'badge-danger', success: 'badge-success', warning: 'badge-warning' }[s.verdict];
+  document.getElementById('rbadge').className = 'result-badge ' + badgeClass;
+  document.getElementById('rbadge').textContent = s.vtext;
+  document.getElementById('rtitle').textContent = s.title;
+  document.getElementById('rtools').innerHTML = s.tools.map(([n,v,sub]) =>
+    `<div class="rtool"><div class="rtool-name">${n}</div><div class="rtool-val">${v}</div><div class="rtool-sub">${sub}</div></div>`
+  ).join('');
+  document.getElementById('rsummary').textContent = s.summary;
+  rc.classList.add('show');
+  running = false;
+}
+
+function renderTests() {
+  const el = document.getElementById('tests-grid');
+  el.innerHTML = TESTS_DATA.map(([name, count]) => `
+    <div class="test-row">
+      <span class="test-name">${name}</span>
+      <div class="test-track"><div class="test-fill" style="width:${Math.round(count/30*100)}%"></div></div>
+      <span class="test-count">${count}</span>
+    </div>
+  `).join('');
+}
+
+document.getElementById('target').addEventListener('keydown', e => { if (e.key === 'Enter') runDemo(); });
+
+// Init
+renderTests();
+const term = document.getElementById('term');
+term.innerHTML = '<span class="t-line t-gray">Agente de Ciberseguridad v3.0 — MikeUchiha122</span><span class="t-line t-gray">Selecciona un ejemplo o ingresa un target.</span>';
+</script>
+</body>
+</html>
