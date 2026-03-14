@@ -2,9 +2,12 @@ import os
 import re
 import json
 import time
+import ssl
+import socket
 import ipaddress
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 import anthropic
 import requests
@@ -50,7 +53,9 @@ def detectar_tipo(target):
     return "desconocido"
 
 def sanitizar(texto):
-    texto = re.sub(r'[^\w\s\.\-\:\/\@\?\=\&\%]', '', texto.strip())
+    # Nota de seguridad: & y @ removidos de la whitelist (riesgo de command injection)
+    # El ; ' " < > también se filtran. DROP/SELECT sin ; son inofensivos para este uso.
+    texto = re.sub(r'[^\w\s\.\-\:\/\?\=\%]', '', texto.strip())
     return texto[:300]
 
 # ═══════════════════════════════════════════════════
@@ -203,6 +208,268 @@ def buscar_subdominios(dominio):
         "subdominios": lista
     }
 
+# ── Marcas conocidas para detectar suplantación ─────
+MARCAS_CONOCIDAS = [
+    "paypal", "bbva", "banamex", "santander", "hsbc", "banorte",
+    "citibank", "chase", "wellsfargo", "bankofamerica",
+    "google", "gmail", "facebook", "instagram", "whatsapp",
+    "apple", "icloud", "microsoft", "outlook", "netflix",
+    "amazon", "mercadolibre", "mercadopago", "sat", "imss",
+    "visa", "mastercard", "bancomer", "rappi", "oxxo"
+]
+
+def verificar_ssl(url) -> dict:
+    """
+    Verifica el certificado SSL de una URL sin visitar el sitio.
+    Detecta si el certificado es valido, a quien fue emitido,
+    cuanto tiempo lleva activo y si el dominio coincide.
+    Un SSL valido NO garantiza que el sitio sea seguro.
+    """
+    try:
+        parsed  = urlparse(url if url.startswith("http") else f"https://{url}")
+        dominio = parsed.netloc or parsed.path.split("/")[0]
+        puerto  = parsed.port or 443
+
+        ctx = ssl.create_default_context()
+        with socket.create_connection((dominio, puerto), timeout=HTTP_TIMEOUT) as sock:
+            with ctx.wrap_socket(sock, server_hostname=dominio) as ssock:
+                cert = ssock.getpeercert()
+
+        # Fechas
+        fecha_inicio = datetime.strptime(
+            cert.get("notBefore", ""), "%b %d %H:%M:%S %Y %Z"
+        ).replace(tzinfo=timezone.utc)
+        fecha_fin = datetime.strptime(
+            cert.get("notAfter", ""), "%b %d %H:%M:%S %Y %Z"
+        ).replace(tzinfo=timezone.utc)
+        ahora        = datetime.now(timezone.utc)
+        dias_activo  = (ahora - fecha_inicio).days
+        dias_expira  = (fecha_fin - ahora).days
+
+        # Emisor y sujeto
+        emisor  = dict(x[0] for x in cert.get("issuer",  []))
+        sujeto  = dict(x[0] for x in cert.get("subject", []))
+        org_emisor   = emisor.get("organizationName", "Desconocido")
+        cn_sujeto    = sujeto.get("commonName", dominio)
+
+        # SANs (Subject Alternative Names)
+        sans = [v for t, v in cert.get("subjectAltName", []) if t == "DNS"]
+
+        # Alertas
+        alertas = []
+        if dias_activo < 30:
+            alertas.append(f"Certificado muy nuevo: solo {dias_activo} dias de antiguedad")
+        if dias_expira < 15:
+            alertas.append(f"Certificado vence en {dias_expira} dias")
+        if dominio not in cn_sujeto and not any(dominio.endswith(s.lstrip("*")) for s in sans):
+            alertas.append("El dominio NO coincide con el certificado (posible MITM)")
+        if org_emisor in ("Let's Encrypt", "ZeroSSL", "Desconocido"):
+            alertas.append("Certificado gratuito automatico — comun en phishing pero tambien en sitios legitimos")
+
+        return {
+            "fuente":          "SSL/TLS directo",
+            "dominio":         dominio,
+            "valido":          True,
+            "emitido_por":     org_emisor,
+            "emitido_a":       cn_sujeto,
+            "dias_activo":     dias_activo,
+            "dias_para_vencer": dias_expira,
+            "dominios_cubiertos": sans[:5],
+            "alertas_ssl":     alertas,
+            "nota":            "SSL valido no garantiza que el sitio sea seguro"
+        }
+
+    except ssl.SSLCertVerificationError:
+        return {
+            "fuente":  "SSL/TLS directo",
+            "valido":  False,
+            "error":   "Certificado SSL INVALIDO o no confiable — senial de alerta grave",
+            "alertas_ssl": ["El navegador mostraria advertencia de seguridad"]
+        }
+    except ssl.SSLError as e:
+        return {"fuente": "SSL/TLS directo", "valido": False, "error": f"Error SSL: {str(e)[:100]}"}
+    except Exception as e:
+        return {"fuente": "SSL/TLS directo", "error": f"No se pudo verificar SSL: {str(e)[:100]}"}
+
+
+def analizar_url_phishing(url) -> dict:
+    """
+    Analiza una URL buscando patrones clasicos de phishing:
+    - Suplantacion de marcas conocidas en el dominio
+    - Dominios con caracteres parecidos (typosquatting)
+    - Estructura de URL sospechosa (muchos subdominios, palabras clave)
+    - Palabras de urgencia o engano en la URL
+    - Discrepancia entre marca mencionada y dominio real
+    """
+    if not url.startswith("http"):
+        url = "https://" + url
+
+    parsed  = urlparse(url)
+    dominio = parsed.netloc.lower()
+    path    = parsed.path.lower()
+    tld_dominio = dominio.split(".")[-1] if "." in dominio else ""
+
+    # Dominio raiz real (ultimo nivel antes del TLD)
+    partes      = dominio.replace("www.", "").split(".")
+    dominio_raiz = partes[-2] if len(partes) >= 2 else dominio
+
+    alertas    = []
+    positivos  = []
+
+    # 1. Typosquatting: sustitucion de caracteres comunes
+    sustituciones = {"0": "o", "1": "l", "3": "e", "4": "a", "5": "s", "@": "a"}
+    dominio_normalizado = dominio
+    for k, v in sustituciones.items():
+        dominio_normalizado = dominio_normalizado.replace(k, v)
+
+    marca_en_dominio     = None
+    marca_en_path        = None
+    for marca in MARCAS_CONOCIDAS:
+        if marca in dominio_normalizado:
+            marca_en_dominio = marca
+        if marca in path:
+            marca_en_path = marca
+
+    # 2. Marca en dominio pero dominio raiz NO es la marca oficial
+    if marca_en_dominio and marca_en_dominio != dominio_raiz:
+        alertas.append(
+            f"ALERTA CRITICA: Menciona '{marca_en_dominio}' pero el dominio real es '{dominio_raiz}.{tld_dominio}'"
+        )
+    elif marca_en_dominio and marca_en_dominio == dominio_raiz:
+        positivos.append(f"Dominio raiz coincide con la marca '{marca_en_dominio}'")
+
+    # 3. Marca en el path pero no en el dominio (tecnica comun de phishing)
+    if marca_en_path and not marca_en_dominio:
+        alertas.append(
+            f"ALERTA: Menciona '{marca_en_path}' en la ruta pero el dominio es '{dominio_raiz}'"
+        )
+
+    # 4. Demasiados subdominios
+    n_subdominios = len(partes) - 2
+    if n_subdominios >= 3:
+        alertas.append(f"URL con {n_subdominios} niveles de subdominio — estructura inusual")
+    elif n_subdominios >= 2:
+        alertas.append(f"Subdominio multiple detectado: {dominio}")
+
+    # 5. Palabras de urgencia/engano en la URL
+    palabras_phishing = [
+        "login", "verify", "secure", "update", "confirm", "account",
+        "password", "signin", "banking", "alert", "suspended",
+        "acceso", "verificar", "seguro", "actualizar", "confirmar",
+        "cuenta", "contrasena", "alerta", "suspendido", "urgente"
+    ]
+    encontradas = [p for p in palabras_phishing if p in dominio + path]
+    if len(encontradas) >= 3:
+        alertas.append(f"Multiples palabras de engano en la URL: {', '.join(encontradas[:5])}")
+    elif len(encontradas) >= 1:
+        alertas.append(f"Palabras sospechosas en la URL: {', '.join(encontradas)}")
+
+    # 6. TLD sospechoso (no es regla absoluta pero es indicador)
+    tlds_riesgo = ["tk", "ml", "ga", "cf", "gq", "xyz", "top", "click", "link"]
+    if tld_dominio in tlds_riesgo:
+        alertas.append(f"TLD '.{tld_dominio}' frecuentemente usado en dominios maliciosos gratuitos")
+
+    # 7. Dominio muy largo
+    if len(dominio_raiz) > 20:
+        alertas.append(f"Dominio inusualmente largo ({len(dominio_raiz)} caracteres)")
+
+    # 8. Caracteres especiales sospechosos en dominio
+    if re.search(r'[^\w\-\.]', dominio):
+        alertas.append("Caracteres especiales en el dominio — posible homoglyph attack")
+
+    # Veredicto
+    if len(alertas) >= 3:
+        veredicto = "MUY SOSPECHOSO"
+    elif len(alertas) >= 1:
+        veredicto = "SOSPECHOSO"
+    else:
+        veredicto = "SIN ALERTAS OBVIAS"
+
+    return {
+        "fuente":           "Analisis de URL local",
+        "url":              url,
+        "dominio_raiz":     f"{dominio_raiz}.{tld_dominio}",
+        "marca_detectada":  marca_en_dominio or marca_en_path,
+        "veredicto_url":    veredicto,
+        "alertas":          alertas,
+        "positivos":        positivos,
+        "limitaciones":     [
+            "No analiza el contenido visual del sitio",
+            "No detecta phishing en sitios recien creados sin historial",
+            "No inspecciona el codigo JavaScript del sitio"
+        ]
+    }
+
+
+def verificar_redireccion(url) -> dict:
+    """
+    Sigue las redirecciones de una URL SIN cargar el contenido completo.
+    Detecta si la URL lleva a un dominio diferente al esperado.
+    Usa HEAD request para no descargar el sitio.
+    """
+    if not url.startswith("http"):
+        url = "https://" + url
+
+    dominio_original = urlparse(url).netloc.lower()
+    historial        = [url]
+    alertas          = []
+
+    try:
+        resp = requests.head(
+            url,
+            allow_redirects=True,
+            timeout=HTTP_TIMEOUT,
+            headers={"User-Agent": "Mozilla/5.0 (Security Scanner)"}
+        )
+
+        url_final        = resp.url
+        dominio_final    = urlparse(url_final).netloc.lower()
+        historial        = [r.url for r in resp.history] + [url_final]
+        n_redirecciones  = len(resp.history)
+
+        # Alertas
+        if dominio_final != dominio_original:
+            alertas.append(
+                f"REDIRIGE a dominio diferente: {dominio_original} → {dominio_final}"
+            )
+
+        if n_redirecciones > 3:
+            alertas.append(f"Cadena larga de redirecciones: {n_redirecciones} saltos")
+
+        # Detectar acortadores de URL
+        acortadores = ["bit.ly", "t.co", "tinyurl", "goo.gl", "ow.ly", "rb.gy", "cutt.ly"]
+        if any(a in dominio_original for a in acortadores):
+            alertas.append(f"URL acortada detectada — el destino real era: {dominio_final}")
+
+        return {
+            "fuente":            "Verificacion de redirecciones",
+            "url_original":      url,
+            "url_final":         url_final,
+            "dominio_original":  dominio_original,
+            "dominio_final":     dominio_final,
+            "n_redirecciones":   n_redirecciones,
+            "hubo_cambio":       dominio_final != dominio_original,
+            "cadena":            historial[:6],
+            "alertas":           alertas,
+            "codigo_http":       resp.status_code
+        }
+
+    except requests.exceptions.SSLError:
+        return {
+            "fuente":   "Verificacion de redirecciones",
+            "url":      url,
+            "error":    "Error SSL al conectar — el sitio tiene certificado invalido",
+            "alertas":  ["Certificado SSL invalido detectado en la conexion"]
+        }
+    except Exception as e:
+        return {
+            "fuente":  "Verificacion de redirecciones",
+            "url":     url,
+            "error":   f"No se pudo conectar: {str(e)[:100]}",
+            "alertas": []
+        }
+
+
 # ═══════════════════════════════════════════════════
 #  DEFINICIÓN DE HERRAMIENTAS PARA EL AGENTE
 # ═══════════════════════════════════════════════════
@@ -275,6 +542,39 @@ TOOLS = [
             "required": ["dominio"]
         }
     },
+    {
+        "name": "verificar_ssl",
+        "description": "Verifica el certificado SSL de una URL. Detecta si es válido, quién lo emitió, hace cuántos días fue creado y si el dominio coincide. Úsala siempre que analices una URL antes de ingresar datos.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "URL completa o dominio a verificar (ej: https://banco.com o banco.com)"}
+            },
+            "required": ["url"]
+        }
+    },
+    {
+        "name": "analizar_url_phishing",
+        "description": "Analiza la estructura de una URL buscando patrones de phishing: suplantación de marcas, typosquatting, palabras de engaño, subdominios sospechosos. No necesita conectarse al sitio.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "URL a analizar (ej: https://bbva-login-secure.com/acceso)"}
+            },
+            "required": ["url"]
+        }
+    },
+    {
+        "name": "verificar_redireccion",
+        "description": "Sigue las redirecciones de una URL para ver a dónde lleva realmente, sin cargar el sitio completo. Detecta si la URL lleva a un dominio diferente al esperado o si es una URL acortada.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "URL a verificar (ej: https://bit.ly/xyz o https://sitio.com)"}
+            },
+            "required": ["url"]
+        }
+    },
 ]
 
 # ═══════════════════════════════════════════════════
@@ -289,6 +589,9 @@ def ejecutar_herramienta(nombre, parametros):
         "buscar_cves":        lambda p: buscar_cves(p["software"], p.get("version", "")),
         "check_whois":        lambda p: check_whois(p["dominio"]),
         "buscar_subdominios": lambda p: buscar_subdominios(p["dominio"]),
+        "verificar_ssl":      lambda p: verificar_ssl(p["url"]),
+        "analizar_url_phishing": lambda p: analizar_url_phishing(p["url"]),
+        "verificar_redireccion": lambda p: verificar_redireccion(p["url"]),
     }
     if nombre not in mapa:
         return {"error": f"Herramienta '{nombre}' no existe"}
@@ -317,17 +620,33 @@ def analizar(target):
     print(f"  🕐 Inicio     : {datetime.now().strftime('%H:%M:%S')}")
     print(f"{'─'*55}\n")
 
-    system = """Eres un analista de ciberseguridad senior. Analiza el target usando las herramientas disponibles y sé exhaustivo.
+    system = """Eres un analista de ciberseguridad senior especializado en detección de phishing y sitios fraudulentos.
 
-Al terminar tu análisis técnico, escribe obligatoriamente este bloque final:
+Cuando analices una URL o dominio con intención de verificar si es seguro antes de ingresar datos:
+1. Usa analizar_url_phishing para detectar patrones de engaño en la URL
+2. Usa verificar_ssl para revisar el certificado
+3. Usa verificar_redireccion para ver a dónde lleva realmente
+4. Usa check_virustotal para reputación en bases de datos
+5. Usa check_whois para ver la edad del dominio
 
-═══ RESUMEN PARA TODOS ═══
-Explica los resultados en lenguaje completamente simple, sin jerga técnica, como si se los explicaras a alguien que nunca ha escuchado sobre ciberseguridad. Incluye:
-• ¿Qué es este target en palabras simples?
-• ¿Es peligroso? ¿Por qué sí o por qué no?
-• ¿Qué debería hacer alguien que vio este target en sus registros?
+Para otros tipos de target (IPs, hashes, dominios sin URL) usa las herramientas correspondientes.
+
+Al terminar escribe OBLIGATORIAMENTE estos dos bloques:
+
+━━━ VEREDICTO FINAL ━━━
+SEGURO / PRECAUCIÓN / NO ENTRES
+(una línea explicando por qué)
+
+━━━ RESUMEN PARA TODOS ━━━
+Explica en lenguaje completamente simple, sin tecnicismos:
+• ¿Qué encontramos?
+• ¿Es seguro ingresar datos aquí? ¿Por qué sí o no?
+• ¿Qué debería hacer alguien que recibió este link?
 • NIVEL DE RIESGO: CRÍTICO / ALTO / MEDIO / BAJO / LIMPIO
-  (explica qué significa ese nivel en una oración)
+
+━━━ LO QUE NO PUDIMOS VERIFICAR ━━━
+Lista honesta de qué limitaciones tuvo este análisis
+(diseño visual, scripts JS, comportamiento del formulario, etc.)
 
 Responde siempre en español."""
 
@@ -336,12 +655,15 @@ Responde siempre en español."""
     inicio     = time.time()
 
     nombres_amigables = {
-        "check_virustotal":   "🦠 Verificando en 90+ antivirus",
-        "check_abuseipdb":    "🚨 Revisando reportes de abuso",
-        "check_ipinfo":       "🌍 Obteniendo geolocalización",
-        "buscar_cves":        "🔍 Buscando vulnerabilidades conocidas",
-        "check_whois":        "📋 Consultando registro del dominio",
-        "buscar_subdominios": "🗺️  Mapeando subdominios",
+        "check_virustotal":      "🦠 Verificando en 90+ antivirus",
+        "check_abuseipdb":       "🚨 Revisando reportes de abuso",
+        "check_ipinfo":          "🌍 Obteniendo geolocalización",
+        "buscar_cves":           "🔍 Buscando vulnerabilidades conocidas",
+        "check_whois":           "📋 Consultando registro del dominio",
+        "buscar_subdominios":    "🗺️  Mapeando subdominios",
+        "verificar_ssl":         "🔒 Verificando certificado SSL",
+        "analizar_url_phishing": "🎣 Analizando patrones de phishing en la URL",
+        "verificar_redireccion": "↪️  Siguiendo redirecciones",
     }
 
     while True:
@@ -454,34 +776,33 @@ def ver_historial():
 # ═══════════════════════════════════════════════════
 
 BANNER = """
-╔═══════════════════════════════════════════════════╗
-║      🔐 AGENTE DE CIBERSEGURIDAD v2.0 🔐         ║
-╠═══════════════════════════════════════════════════╣
-║  Analiza: IPs · Dominios · Hashes · URLs          ║
-║  Resultados técnicos + explicación para todos     ║
-╠═══════════════════════════════════════════════════╣
-║  Herramientas: VirusTotal · AbuseIPDB · IPInfo    ║
-║                CVE/NVD · WHOIS · Subdominios      ║
-╠═══════════════════════════════════════════════════╣
-║  Autor: Miguel Ángel Ramírez Galicia              ║
-║  GitHub/Handle: MikeUchiha                 2026   ║
-╚═══════════════════════════════════════════════════╝
+╔═══════════════════════════════════════════════════════╗
+║       🔐 AGENTE DE CIBERSEGURIDAD v3.0 🔐             ║
+╠═══════════════════════════════════════════════════════╣
+║  Analiza: IPs · Dominios · Hashes · URLs              ║
+║  Verifica sitios ANTES de ingresar tus datos          ║
+╠═══════════════════════════════════════════════════════╣
+║  VirusTotal · AbuseIPDB · IPInfo · CVE/NVD            ║
+║  WHOIS · SSL · Anti-Phishing · Redirecciones          ║
+╠═══════════════════════════════════════════════════════╣
+║  Autor: MikeUchiha122                                 ║
+╚═══════════════════════════════════════════════════════╝
 """
 
 if __name__ == "__main__":
     print(BANNER)
     while True:
-        print("  [1] Analizar un target")
-        print("  [2] Ver historial de análisis")
-        print("  [3] Salir")
+        print("  [1] Analizar un target (IP, dominio, hash)")
+        print("  [2] Verificar URL antes de ingresar datos")
+        print("  [3] Ver historial de análisis")
+        print("  [4] Salir")
         opcion = input("\n  Elige una opción: ").strip()
 
         if opcion == "1":
-            print("\n  Ejemplos válidos:")
+            print("\n  Ejemplos:")
             print("    IP      → 8.8.8.8")
             print("    Dominio → google.com")
             print("    Hash    → d41d8cd98f00b204e9800998ecf8427e")
-            print("    URL     → https://sitio-sospechoso.com")
             target = input("\n  🎯 Ingresa el target: ").strip()
             if target:
                 resultado = analizar(target)
@@ -493,11 +814,26 @@ if __name__ == "__main__":
                 print("  ⚠️  Escribe algo para analizar.\n")
 
         elif opcion == "2":
-            ver_historial()
+            print("\n  Pega la URL que quieres verificar antes de entrar.")
+            print("  Ejemplo: https://bbva-login-seguro.com/acceso\n")
+            url = input("  🔗 URL a verificar: ").strip()
+            if url:
+                if not url.startswith("http"):
+                    url = "https://" + url
+                resultado = analizar(url)
+                if resultado:
+                    guardar = input("  ¿Guardar reporte? (s/n): ").strip().lower()
+                    if guardar == "s":
+                        guardar_reporte(resultado)
+            else:
+                print("  ⚠️  Escribe una URL.\n")
 
         elif opcion == "3":
+            ver_historial()
+
+        elif opcion == "4":
             print("\n  👋 Hasta luego.\n")
             break
 
         else:
-            print("  ⚠️  Opción inválida. Escribe 1, 2 o 3.\n")
+            print("  ⚠️  Opción inválida. Escribe 1, 2, 3 o 4.\n")

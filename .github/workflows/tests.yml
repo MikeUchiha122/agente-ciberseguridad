@@ -1,0 +1,92 @@
+# ═══════════════════════════════════════════════════════════
+#  GITHUB ACTIONS — Tests automáticos en la nube
+#  Archivo: .github/workflows/tests.yml
+#
+#  ¿QUÉ HACE ESTO?
+#  Cada vez que haces "git push" a GitHub, este archivo
+#  le dice a GitHub: "corre los tests en tus servidores".
+#  Si pasan → verde ✅ en tu repositorio
+#  Si fallan → rojo ❌ + email de aviso
+#
+#  Es GRATIS para repositorios públicos.
+#  Autor: MikeUchiha122
+# ═══════════════════════════════════════════════════════════
+
+name: Tests de Seguridad
+
+# ── ¿Cuándo correr? ─────────────────────────────────────────
+on:
+  push:
+    branches: [ main, master ]      # al hacer push a main o master
+  pull_request:
+    branches: [ main, master ]      # al abrir un Pull Request
+
+# ── El trabajo que se ejecuta ───────────────────────────────
+jobs:
+  tests:
+    name: "🔐 Correr 102 tests de seguridad"
+    runs-on: ubuntu-latest          # servidor Linux de GitHub (gratis)
+
+    steps:
+
+      # 1. Descargar tu código del repositorio
+      - name: "📥 Descargar código"
+        uses: actions/checkout@v4
+
+      # 2. Instalar Python
+      - name: "🐍 Configurar Python 3.12"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # 3. Instalar las dependencias del proyecto
+      - name: "📦 Instalar dependencias"
+        run: |
+          python -m pip install --upgrade pip
+          pip install anthropic requests python-dotenv
+
+      # 4. Correr los tests
+      #    Las API keys son falsas aquí — los tests usan mocks
+      #    y no necesitan keys reales para funcionar
+      - name: "🧪 Correr tests (102 tests)"
+        env:
+          ANTHROPIC_API_KEY: "test-key-ci"
+          VIRUSTOTAL_API_KEY: ""
+          ABUSEIPDB_API_KEY: ""
+        run: |
+          python test_agente.py
+
+      # 5. Si los tests pasan, mostrar resumen en GitHub
+      - name: "✅ Tests completados"
+        if: success()
+        run: |
+          echo "## ✅ Todos los tests pasaron" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "El código está listo para producción." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Bloque | Estado |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Validadores | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Sanitizador | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Anti-Phishing | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Seguridad API Keys | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Herramientas Mock | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Inputs Maliciosos | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Lógica de Negocio | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Estructura Respuestas | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| buscar_subdominios | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| verificar_ssl | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| verificar_redireccion | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Reportes e Historial | ✅ |" >> $GITHUB_STEP_SUMMARY
+
+      # 6. Si los tests fallan, explicar qué hacer
+      - name: "❌ Tests fallaron"
+        if: failure()
+        run: |
+          echo "## ❌ Hay tests fallando" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Qué hacer:**" >> $GITHUB_STEP_SUMMARY
+          echo "1. Mira los logs arriba para ver cuál test falló" >> $GITHUB_STEP_SUMMARY
+          echo "2. Corrige el error en tu código local" >> $GITHUB_STEP_SUMMARY
+          echo "3. Corre \`python test_agente.py\` localmente" >> $GITHUB_STEP_SUMMARY
+          echo "4. Cuando pasen, haz push de nuevo" >> $GITHUB_STEP_SUMMARY
