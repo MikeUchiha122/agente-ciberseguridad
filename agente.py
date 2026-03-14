@@ -15,8 +15,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ── Carpeta de reportes ──────────────────────────────────────
-REPORTES_DIR = Path("C:/agente-seguridad/reportes")
+# ── Carpeta de reportes (funciona en Windows, Linux y Mac) ──
+REPORTES_DIR = Path(__file__).parent / "reportes"
 REPORTES_DIR.mkdir(exist_ok=True)
 
 MAX_TOOL_CALLS = 10   # seguridad: límite de herramientas por análisis
