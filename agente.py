@@ -1,3 +1,4 @@
+import sys
 import os
 import re
 import json
@@ -8,6 +9,12 @@ import ipaddress
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
+
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 import anthropic
 import requests

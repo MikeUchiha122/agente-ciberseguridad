@@ -1,0 +1,57 @@
+#!/bin/sh
+# ═══════════════════════════════════════════════════════════
+#  PRE-COMMIT HOOK — Agente de Ciberseguridad
+#  Se ejecuta automáticamente ANTES de cada git commit.
+#  Si los tests fallan → el commit se cancela.
+#  Autor: MikeUchiha122
+# ═══════════════════════════════════════════════════════════
+
+echo ""
+echo "╔══════════════════════════════════════════════════════╗"
+echo "║  🔐 Verificando tests antes de permitir el commit…   ║"
+echo "╚══════════════════════════════════════════════════════╝"
+echo ""
+
+# Buscar Python (Windows usa 'python', Linux/Mac usa 'python3')
+if command -v python > /dev/null 2>&1; then
+    PYTHON=python
+elif command -v python3 > /dev/null 2>&1; then
+    PYTHON=python3
+else
+    echo "❌ No se encontró Python. Instálalo antes de continuar."
+    exit 1
+fi
+
+# Verificar que test_agente.py existe
+if [ ! -f "test_agente.py" ]; then
+    echo "⚠️  No se encontró test_agente.py"
+    echo "   Asegúrate de que esté en la raíz del proyecto."
+    echo "   Commit cancelado por seguridad."
+    exit 1
+fi
+
+# Correr los tests
+$PYTHON test_agente.py
+
+# Capturar el código de salida (0 = éxito, 1 = fallos)
+EXIT_CODE=$?
+
+echo ""
+
+if [ $EXIT_CODE -eq 0 ]; then
+    echo "✅ Todos los tests pasaron — commit permitido."
+    echo ""
+    exit 0
+else
+    echo "╔══════════════════════════════════════════════════════╗"
+    echo "║  ❌  COMMIT CANCELADO — Hay tests fallando           ║"
+    echo "║                                                      ║"
+    echo "║  Corrige los errores y vuelve a intentar.            ║"
+    echo "║                                                      ║"
+    echo "║  Si necesitas saltarte los tests (emergencia):       ║"
+    echo "║    git commit --no-verify -m 'mensaje'               ║"
+    echo "║  (úsalo solo en casos excepcionales)                 ║"
+    echo "╚══════════════════════════════════════════════════════╝"
+    echo ""
+    exit 1
+fi
