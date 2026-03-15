@@ -240,7 +240,205 @@ def check_whois(dominio):
         "nota":    "Para datos completos de registrador agrega WHOISXML_API_KEY"
     }
 
-def buscar_subdominios(dominio):
+def check_greynoise(ip) -> dict:
+    """
+    Consulta GreyNoise para determinar si una IP es un scanner legítimo
+    (Shodan, Censys, investigadores) o tráfico malicioso real.
+    Resuelve el problema de falsos positivos de VirusTotal:
+    una IP puede tener detecciones porque escanea internet legítimamente.
+
+    API gratuita: greynoise.io → Sign up → Community API (no key requerida para /community)
+    API de pago:  mayor detalle con GREYNOISE_API_KEY en .env
+    """
+    if not validar_ip(ip):
+        return {"error": f"'{ip}' no es una IP válida"}
+
+    api_key = os.getenv("GREYNOISE_API_KEY", "")
+
+    # Intentar primero con API key si existe (más datos)
+    if api_key:
+        data = http_get(
+            f"https://api.greynoise.io/v3/community/{ip}",
+            headers={"key": api_key}
+        )
+    else:
+        # Community endpoint — no requiere key pero tiene límites
+        data = http_get(f"https://api.greynoise.io/v3/community/{ip}")
+
+    if "error" in data:
+        # Si falla la API, intentar el endpoint RIOT (IPs conocidas benignas)
+        riot = http_get(f"https://api.greynoise.io/v2/riot/{ip}")
+        if "error" not in riot:
+            return {
+                "fuente":       "GreyNoise RIOT",
+                "ip":           ip,
+                "es_riot":      riot.get("riot", False),
+                "nombre":       riot.get("name", "Desconocido"),
+                "descripcion":  riot.get("description", ""),
+                "confianza":    riot.get("trust_level", ""),
+                "veredicto":    "BENIGNO" if riot.get("riot") else "SIN DATOS",
+                "nota":         "RIOT = lista de IPs conocidas como benignas (Google, Cloudflare, etc.)"
+            }
+        return {"fuente": "GreyNoise", "error": "No se pudo consultar GreyNoise", "ip": ip}
+
+    clasificacion = data.get("classification", "unknown")
+    es_scanner    = data.get("noise", False)
+    es_benigno    = data.get("riot", False)
+    nombre        = data.get("name", "")
+
+    # Determinar veredicto
+    if es_benigno:
+        veredicto = "BENIGNO"
+        contexto  = f"IP conocida y legítima: {nombre}"
+    elif clasificacion == "malicious":
+        veredicto = "MALICIOSO"
+        contexto  = "GreyNoise confirma actividad maliciosa activa"
+    elif clasificacion == "benign":
+        veredicto = "BENIGNO"
+        contexto  = f"Scanner legítimo conocido: {nombre or 'investigador de seguridad'}"
+    elif es_scanner:
+        veredicto = "SCANNER"
+        contexto  = "Escanea internet masivamente (puede ser investigador o bot)"
+    else:
+        veredicto = "SIN ACTIVIDAD"
+        contexto  = "GreyNoise no ha observado actividad de esta IP"
+
+    return {
+        "fuente":          "GreyNoise",
+        "ip":              ip,
+        "clasificacion":   clasificacion,
+        "es_scanner":      es_scanner,
+        "es_benigno":      es_benigno,
+        "nombre":          nombre,
+        "mensaje":         data.get("message", ""),
+        "veredicto":       veredicto,
+        "contexto":        contexto,
+        "nota":            "GreyNoise distingue scanners legítimos de atacantes reales"
+    }
+
+
+def check_urlscan(url) -> dict:
+    """
+    Envía una URL a URLScan.io para análisis completo en navegador real.
+    URLScan visita el sitio, captura un screenshot, analiza el HTML,
+    JavaScript, cookies, y detecta phishing visual que otros no pueden ver.
+
+    Proceso:
+    1. Envía la URL para escaneo (POST)
+    2. Espera ~10 segundos mientras URLScan visita el sitio
+    3. Recupera los resultados (GET)
+
+    API gratuita: urlscan.io → Sign up → API Key
+    Sin key: solo búsqueda en escaneos públicos previos
+    """
+    if not url:
+        return {"error": "URL requerida"}
+
+    if not url.startswith("http"):
+        url = "https://" + url
+
+    api_key = os.getenv("URLSCAN_API_KEY", "")
+
+    # ── Paso 1: Buscar si ya existe un escaneo reciente ──────
+    parsed  = urlparse(url)
+    dominio = parsed.netloc or url
+    busqueda = http_get(
+        "https://urlscan.io/api/v1/search/",
+        params={"q": f"domain:{dominio}", "size": 1}
+    )
+
+    resultado_previo = None
+    if "error" not in busqueda and busqueda.get("results"):
+        resultado_previo = busqueda["results"][0]
+
+    # ── Paso 2: Enviar nuevo escaneo si tenemos API key ──────
+    if api_key:
+        try:
+            resp = requests.post(
+                "https://urlscan.io/api/v1/scan/",
+                headers={"API-Key": api_key, "Content-Type": "application/json"},
+                json={"url": url, "visibility": "public"},
+                timeout=HTTP_TIMEOUT
+            )
+            scan_data = resp.json()
+            scan_uuid = scan_data.get("uuid", "")
+
+            if scan_uuid:
+                # Esperar a que el escaneo termine (URLScan tarda ~10s)
+                time.sleep(12)
+                resultado = http_get(f"https://urlscan.io/api/v1/result/{scan_uuid}/")
+
+                if "error" not in resultado:
+                    page    = resultado.get("page", {})
+                    verdicts = resultado.get("verdicts", {})
+                    overall  = verdicts.get("overall", {})
+                    lists    = resultado.get("lists", {})
+
+                    alertas = []
+                    if overall.get("malicious"):
+                        alertas.append("URLScan marca la página como MALICIOSA")
+                    if overall.get("score", 0) > 50:
+                        alertas.append(f"Puntuación de riesgo alta: {overall.get('score')}/100")
+                    if page.get("country") and page.get("country") not in ["US","MX","ES","GB","CA","DE","FR"]:
+                        alertas.append(f"Servidor en país inusual: {page.get('country')}")
+
+                    tecnologias = list(set([
+                        t.get("app", "") for t in resultado.get("meta", {}).get("processors", {}).get("wappa", {}).get("data", [])
+                        if t.get("app")
+                    ]))[:5]
+
+                    return {
+                        "fuente":         "URLScan.io (escaneo en vivo)",
+                        "url":            url,
+                        "url_final":      page.get("url", url),
+                        "titulo":         page.get("title", "Sin título"),
+                        "servidor":       page.get("server", "Desconocido"),
+                        "pais_servidor":  page.get("country", "?"),
+                        "ip_servidor":    page.get("ip", "?"),
+                        "es_malicioso":   overall.get("malicious", False),
+                        "score_riesgo":   overall.get("score", 0),
+                        "tecnologias":    tecnologias,
+                        "alertas":        alertas,
+                        "screenshot_url": f"https://urlscan.io/screenshots/{scan_uuid}.png",
+                        "reporte_url":    f"https://urlscan.io/result/{scan_uuid}/",
+                        "veredicto":      "PELIGROSO" if overall.get("malicious") else "REVISAR" if overall.get("score", 0) > 30 else "LIMPIO",
+                        "nota":           "Ver screenshot: " + f"https://urlscan.io/screenshots/{scan_uuid}.png"
+                    }
+        except Exception as e:
+            pass  # Si falla el escaneo en vivo, usar resultado previo
+
+    # ── Paso 3: Usar escaneo previo si existe ────────────────
+    if resultado_previo:
+        page     = resultado_previo.get("page", {})
+        verdicts = resultado_previo.get("verdicts", {})
+        overall  = verdicts.get("overall", {}) if verdicts else {}
+        scan_id  = resultado_previo.get("_id", "")
+
+        return {
+            "fuente":        "URLScan.io (escaneo previo)",
+            "url":           url,
+            "titulo":        page.get("title", "Sin título"),
+            "pais_servidor": page.get("country", "?"),
+            "ip_servidor":   page.get("ip", "?"),
+            "es_malicioso":  overall.get("malicious", False),
+            "score_riesgo":  overall.get("score", 0),
+            "reporte_url":   f"https://urlscan.io/result/{scan_id}/" if scan_id else "",
+            "screenshot_url": f"https://urlscan.io/screenshots/{scan_id}.png" if scan_id else "",
+            "veredicto":     "PELIGROSO" if overall.get("malicious") else "REVISAR" if overall.get("score",0) > 30 else "LIMPIO",
+            "nota":          "Resultado de escaneo previo. Para escaneo en vivo agrega URLSCAN_API_KEY al .env"
+        }
+
+    # ── Sin resultados ───────────────────────────────────────
+    return {
+        "fuente":   "URLScan.io",
+        "url":      url,
+        "veredicto": "SIN DATOS",
+        "nota":     "No hay escaneos previos. Agrega URLSCAN_API_KEY al .env para escaneos en vivo",
+        "registro": "urlscan.io → Sign up → API Key → gratis"
+    }
+
+
+
     if not validar_dominio(dominio):
         return {"error": f"'{dominio}' no es un dominio válido"}
     data = http_get("https://crt.sh/", params={"q": f"%.{dominio}", "output": "json"})
@@ -627,6 +825,28 @@ TOOLS = [
             "required": ["url"]
         }
     },
+    {
+        "name": "check_greynoise",
+        "description": "Consulta GreyNoise para determinar si una IP es un scanner legítimo (Shodan, Censys, investigadores) o tráfico malicioso real. Úsala siempre junto con VirusTotal para evitar falsos positivos: una IP puede tener detecciones en VT simplemente porque escanea internet legítimamente.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ip": {"type": "string", "description": "Dirección IP a verificar (ej: 45.33.32.156)"}
+            },
+            "required": ["ip"]
+        }
+    },
+    {
+        "name": "check_urlscan",
+        "description": "Envía una URL a URLScan.io para análisis completo en navegador real. URLScan visita el sitio, captura un screenshot, analiza HTML y JavaScript, y detecta phishing visual. Es la herramienta más poderosa para verificar URLs antes de ingresar datos. Úsala siempre que analices una URL sospechosa.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "URL completa a analizar (ej: https://sitio-sospechoso.com)"}
+            },
+            "required": ["url"]
+        }
+    },
 ]
 
 # ═══════════════════════════════════════════════════
@@ -635,15 +855,17 @@ TOOLS = [
 
 def ejecutar_herramienta(nombre, parametros):
     mapa = {
-        "check_virustotal":   lambda p: check_virustotal(p["target"]),
-        "check_abuseipdb":    lambda p: check_abuseipdb(p["ip"]),
-        "check_ipinfo":       lambda p: check_ipinfo(p["ip"]),
-        "buscar_cves":        lambda p: buscar_cves(p["software"], p.get("version", "")),
-        "check_whois":        lambda p: check_whois(p["dominio"]),
-        "buscar_subdominios": lambda p: buscar_subdominios(p["dominio"]),
-        "verificar_ssl":      lambda p: verificar_ssl(p["url"]),
+        "check_virustotal":      lambda p: check_virustotal(p["target"]),
+        "check_abuseipdb":       lambda p: check_abuseipdb(p["ip"]),
+        "check_ipinfo":          lambda p: check_ipinfo(p["ip"]),
+        "buscar_cves":           lambda p: buscar_cves(p["software"], p.get("version", "")),
+        "check_whois":           lambda p: check_whois(p["dominio"]),
+        "buscar_subdominios":    lambda p: buscar_subdominios(p["dominio"]),
+        "verificar_ssl":         lambda p: verificar_ssl(p["url"]),
         "analizar_url_phishing": lambda p: analizar_url_phishing(p["url"]),
         "verificar_redireccion": lambda p: verificar_redireccion(p["url"]),
+        "check_greynoise":       lambda p: check_greynoise(p["ip"]),
+        "check_urlscan":         lambda p: check_urlscan(p["url"]),
     }
     if nombre not in mapa:
         return {"error": f"Herramienta '{nombre}' no existe"}
@@ -672,18 +894,32 @@ def analizar(target):
     print(f"  🕐 Inicio     : {datetime.now().strftime('%H:%M:%S')}")
     print(f"{'─'*55}\n")
 
-    system = """Eres un analista de ciberseguridad senior especializado en detección de phishing y sitios fraudulentos.
+    system = """Eres un analista de ciberseguridad senior especializado en detección de phishing y análisis de amenazas.
 
-Cuando analices una URL o dominio con intención de verificar si es seguro antes de ingresar datos:
-1. Usa analizar_url_phishing para detectar patrones de engaño en la URL
-2. Usa verificar_ssl para revisar el certificado
-3. Usa verificar_redireccion para ver a dónde lleva realmente
-4. Usa check_virustotal para reputación en bases de datos
-5. Usa check_whois para ver la edad del dominio
+Cuando analices una IP:
+1. Usa check_virustotal para reputación general
+2. Usa check_greynoise SIEMPRE junto con VT — distingue scanners legítimos de atacantes reales
+3. Usa check_abuseipdb para historial de abuso
+4. Usa check_ipinfo para geolocalización
 
-Para otros tipos de target (IPs, hashes, dominios sin URL) usa las herramientas correspondientes.
+Cuando analices una URL o dominio sospechoso:
+1. Usa analizar_url_phishing para patrones de engaño
+2. Usa check_urlscan para análisis en navegador real (el más potente — visita el sitio)
+3. Usa verificar_ssl para el certificado
+4. Usa verificar_redireccion para ver el destino real
+5. Usa check_virustotal para reputación
 
-Al terminar escribe OBLIGATORIAMENTE estos dos bloques:
+Para hashes usa check_virustotal.
+Para CVEs usa buscar_cves.
+
+IMPORTANTE sobre GreyNoise: si VT marca una IP como sospechosa pero GreyNoise la identifica
+como scanner legítimo (Shodan, Censys, investigadores), el veredicto final debe reflejar eso.
+No es lo mismo un escáner de seguridad que un atacante.
+
+IMPORTANTE sobre URLScan: si hay screenshot_url en el resultado, inclúyelo en el reporte
+para que el usuario pueda ver cómo se ve el sitio sin visitarlo.
+
+Al terminar escribe OBLIGATORIAMENTE estos bloques:
 
 ━━━ VEREDICTO FINAL ━━━
 SEGURO / PRECAUCIÓN / NO ENTRES
@@ -697,8 +933,7 @@ Explica en lenguaje completamente simple, sin tecnicismos:
 • NIVEL DE RIESGO: CRÍTICO / ALTO / MEDIO / BAJO / LIMPIO
 
 ━━━ LO QUE NO PUDIMOS VERIFICAR ━━━
-Lista honesta de qué limitaciones tuvo este análisis
-(diseño visual, scripts JS, comportamiento del formulario, etc.)
+Lista honesta de limitaciones del análisis.
 
 Responde siempre en español."""
 
@@ -716,6 +951,8 @@ Responde siempre en español."""
         "verificar_ssl":         "🔒 Verificando certificado SSL",
         "analizar_url_phishing": "🎣 Analizando patrones de phishing en la URL",
         "verificar_redireccion": "↪️  Siguiendo redirecciones",
+        "check_greynoise":       "🔭 GreyNoise: ¿scanner legítimo o atacante real?",
+        "check_urlscan":         "🖥️  URLScan: analizando en navegador real",
     }
 
     while True:
@@ -829,13 +1066,14 @@ def ver_historial():
 
 BANNER = """
 ╔═══════════════════════════════════════════════════════╗
-║       🔐 AGENTE DE CIBERSEGURIDAD v3.0 🔐             ║
+║       🔐 AGENTE DE CIBERSEGURIDAD v4.0 🔐            ║
 ╠═══════════════════════════════════════════════════════╣
 ║  Analiza: IPs · Dominios · Hashes · URLs              ║
 ║  Verifica sitios ANTES de ingresar tus datos          ║
 ╠═══════════════════════════════════════════════════════╣
 ║  VirusTotal · AbuseIPDB · IPInfo · CVE/NVD            ║
-║  WHOIS · SSL · Anti-Phishing · Redirecciones          ║
+║  SSL · Anti-Phishing · Redirecciones                  ║
+║  GreyNoise · URLScan.io  ← NUEVO                      ║
 ╠═══════════════════════════════════════════════════════╣
 ║  Autor: MikeUchiha122                                 ║
 ╚═══════════════════════════════════════════════════════╝
