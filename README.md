@@ -63,48 +63,64 @@ Reporte técnico + Resumen para todos + Nivel de riesgo
 
 ---
 
-## Instalación
+## Instalación (Windows)
 
-### Requisitos previos
+### Opción 1 — Con doble clic (recomendado)
 
-- Python 3.12 o superior
-- Una cuenta en [Anthropic](https://console.anthropic.com) (requiere tarjeta)
-- Una cuenta en [VirusTotal](https://virustotal.com) (gratis)
-- Una cuenta en [AbuseIPDB](https://abuseipdb.com) (gratis)
+1. **Instala Python 3.12+** si no lo tienes:
+   - Descarga desde: https://www.python.org/downloads/
+   - DURANTE LA INSTALACIÓN: marca ✅ "Add Python to PATH"
 
-### Paso 1 — Clonar el repositorio
+2. **Clona el repositorio:**
+   ```powershell
+   git clone https://github.com/MikeUchiha122/agente-ciberseguridad.git
+   cd agente-ciberseguridad
+   ```
 
-```powershell
+3. **Instala las dependencias:**
+   ```powershell
+   pip install anthropic requests python-dotenv
+   ```
+
+4. **Crea el archivo `.env`** en la raíz del proyecto:
+   ```env
+   ANTHROPIC_API_KEY=sk-ant-api03-TU-KEY-AQUI
+   VIRUSTOTAL_API_KEY=TU-KEY-AQUI
+   ABUSEIPDB_API_KEY=TU-KEY-AQUI
+   ```
+
+5. **¡Listo!** Haz doble clic en `ejecutar.bat` para iniciar el agente.
+
+### Opción 2 — Desde terminal
+
+1-4. Igual que arriba.
+
+5. Ejecuta:
+   ```powershell
+   python agente.py
+   ```
+
+---
+
+### Si Python no está en el PATH (error: "python no se reconoce")
+
+El archivo `ejecutar.bat` ya incluye Python automáticamente. Si prefieres agregar Python al PATH manualmente:
+
+1. Busca "Variables de entorno" en Windows
+2. Edita la variable "Path" del usuario
+3. Agrega: `C:\Users\TU_USUARIO\AppData\Local\Programs\Python\Python313`
+
+O simplemente usa el archivo `ejecutar.bat` que ya hace esto por ti.
+
+---
+
+## Instalación (Linux/Mac)
+
+```bash
 git clone https://github.com/MikeUchiha122/agente-ciberseguridad.git
 cd agente-ciberseguridad
-```
-
-### Paso 2 — Instalar dependencias
-
-```powershell
 pip install anthropic requests python-dotenv
-```
-
-### Paso 3 — Configurar las API keys
-
-Crea un archivo `.env` en la raíz del proyecto con este contenido:
-
-```env
-ANTHROPIC_API_KEY=sk-ant-api03-TU-KEY-AQUI
-VIRUSTOTAL_API_KEY=TU-KEY-AQUI
-ABUSEIPDB_API_KEY=TU-KEY-AQUI
-```
-
-> ⚠️ **Nunca subas el archivo `.env` a GitHub.** El `.gitignore` ya lo protege, pero verifica siempre con `git status` antes de hacer commit.
-
-Obtén tus API keys aquí:
-- **Anthropic:** [console.anthropic.com](https://console.anthropic.com) → API Keys
-- **VirusTotal:** [virustotal.com](https://virustotal.com) → tu avatar → API key
-- **AbuseIPDB:** [abuseipdb.com](https://abuseipdb.com) → Account → API
-
-### Paso 4 — Ejecutar
-
-```powershell
+cp .env.example .env  # y-edita con tus API keys
 python agente.py
 ```
 
