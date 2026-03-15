@@ -1,4 +1,4 @@
-# 🔐 Agente de Ciberseguridad v3.0
+# 🔐 Agente de Ciberseguridad v4.0
 
 [![Tests de Seguridad](https://github.com/MikeUchiha122/agente-ciberseguridad/actions/workflows/tests.yml/badge.svg)](https://github.com/MikeUchiha122/agente-ciberseguridad/actions/workflows/tests.yml)
 ![Python](https://img.shields.io/badge/Python-3.12-blue?logo=python)
@@ -116,7 +116,7 @@ Al iniciar verás el menú principal:
 
 ```
 ╔══════════════════════════════════════════════════════╗
-║       🔐 AGENTE DE CIBERSEGURIDAD v3.0 🔐            ║
+║       🔐 AGENTE DE CIBERSEGURIDAD v4.0 🔐            ║
 ╠══════════════════════════════════════════════════════╣
 ║  [1] Analizar un target (IP, dominio, hash)          ║
 ║  [2] Verificar URL antes de ingresar datos           ║

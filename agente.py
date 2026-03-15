@@ -240,6 +240,30 @@ def check_whois(dominio):
         "nota":    "Para datos completos de registrador agrega WHOISXML_API_KEY"
     }
 
+def buscar_subdominios(dominio) -> dict:
+    """
+    Descubre subdominios de un dominio de forma pasiva usando Certificate Transparency.
+    """
+    if not validar_dominio(dominio):
+        return {"error": f"'{dominio}' no es un dominio válido"}
+    data = http_get("https://crt.sh/", params={"q": f"%.{dominio}", "output": "json"})
+    if not data or isinstance(data, dict) and "error" in data:
+        return {"error": "No se pudo conectar con crt.sh"}
+    subs = set()
+    for entry in data:
+        for nombre in entry.get("name_value", "").split("\n"):
+            nombre = nombre.strip().lower()
+            if nombre.endswith(f".{dominio}") and "*" not in nombre:
+                subs.add(nombre)
+    lista = sorted(subs)[:20]
+    return {
+        "fuente":      "Certificate Transparency",
+        "dominio":     dominio,
+        "total":       len(subs),
+        "subdominios": lista
+    }
+
+
 def check_greynoise(ip) -> dict:
     """
     Consulta GreyNoise para determinar si una IP es un scanner legítimo
@@ -435,27 +459,6 @@ def check_urlscan(url) -> dict:
         "veredicto": "SIN DATOS",
         "nota":     "No hay escaneos previos. Agrega URLSCAN_API_KEY al .env para escaneos en vivo",
         "registro": "urlscan.io → Sign up → API Key → gratis"
-    }
-
-
-
-    if not validar_dominio(dominio):
-        return {"error": f"'{dominio}' no es un dominio válido"}
-    data = http_get("https://crt.sh/", params={"q": f"%.{dominio}", "output": "json"})
-    if not data or isinstance(data, dict) and "error" in data:
-        return {"error": "No se pudo conectar con crt.sh"}
-    subs = set()
-    for entry in data:
-        for nombre in entry.get("name_value", "").split("\n"):
-            nombre = nombre.strip().lower()
-            if nombre.endswith(f".{dominio}") and "*" not in nombre:
-                subs.add(nombre)
-    lista = sorted(subs)[:20]
-    return {
-        "fuente":      "Certificate Transparency",
-        "dominio":     dominio,
-        "total":       len(subs),
-        "subdominios": lista
     }
 
 # ── Marcas conocidas para detectar suplantación ─────
