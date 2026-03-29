@@ -1378,6 +1378,657 @@ class TestValidarURL(unittest.TestCase):
 
 
 # ═══════════════════════════════════════════════════════════
+#  BLOQUE 14: check_greynoise
+#  ¿El análisis de GreyNoise clasifica correctamente las IPs
+#  según su comportamiento? ¿El fallback a RIOT funciona?
+# ═══════════════════════════════════════════════════════════
+
+class TestCheckGreynoise(unittest.TestCase):
+    """
+    check_greynoise tiene múltiples ramas lógicas:
+    malicioso, benigno, scanner, sin actividad,
+    fallback al endpoint RIOT, y ambos fallan.
+    Ninguna tenía cobertura previa.
+    """
+
+    def _resp_community(self, clasificacion="unknown", noise=False,
+                        riot=False, nombre=""):
+        """Helper: respuesta simulada del endpoint community de GreyNoise"""
+        return {
+            "classification": clasificacion,
+            "noise":          noise,
+            "riot":           riot,
+            "name":           nombre,
+            "message":        "This IP is commonly seen scanning the internet"
+        }
+
+    def test_ip_invalida_retorna_error(self):
+        """IP inválida debe devolver error sin llegar a la API"""
+        from agente import check_greynoise
+        r = check_greynoise("no-es-una-ip")
+        self.assertIn("error", r)
+
+    def test_clasificacion_malicious_da_veredicto_malicioso(self):
+        """IP con classification=malicious → veredicto MALICIOSO"""
+        from agente import check_greynoise
+        with patch("agente.http_get",
+                   return_value=self._resp_community(clasificacion="malicious")):
+            with patch.dict(os.environ, {"GREYNOISE_API_KEY": ""}):
+                r = check_greynoise("1.2.3.4")
+        self.assertEqual(r["veredicto"], "MALICIOSO")
+
+    def test_riot_true_da_veredicto_benigno(self):
+        """IP con riot=True (Cloudflare, Google…) → veredicto BENIGNO"""
+        from agente import check_greynoise
+        with patch("agente.http_get",
+                   return_value=self._resp_community(riot=True, nombre="Cloudflare")):
+            with patch.dict(os.environ, {"GREYNOISE_API_KEY": ""}):
+                r = check_greynoise("1.1.1.1")
+        self.assertEqual(r["veredicto"], "BENIGNO")
+
+    def test_clasificacion_benign_da_veredicto_benigno(self):
+        """classification=benign (scanner legítimo como Shodan) → BENIGNO"""
+        from agente import check_greynoise
+        with patch("agente.http_get",
+                   return_value=self._resp_community(clasificacion="benign",
+                                                     nombre="Shodan")):
+            with patch.dict(os.environ, {"GREYNOISE_API_KEY": ""}):
+                r = check_greynoise("1.2.3.4")
+        self.assertEqual(r["veredicto"], "BENIGNO")
+
+    def test_noise_true_sin_clasificacion_da_scanner(self):
+        """IP que escanea masivamente sin clasificación conocida → SCANNER"""
+        from agente import check_greynoise
+        with patch("agente.http_get",
+                   return_value=self._resp_community(noise=True)):
+            with patch.dict(os.environ, {"GREYNOISE_API_KEY": ""}):
+                r = check_greynoise("1.2.3.4")
+        self.assertEqual(r["veredicto"], "SCANNER")
+
+    def test_sin_actividad_registrada(self):
+        """IP sin ninguna actividad en GreyNoise → SIN ACTIVIDAD"""
+        from agente import check_greynoise
+        with patch("agente.http_get",
+                   return_value=self._resp_community()):
+            with patch.dict(os.environ, {"GREYNOISE_API_KEY": ""}):
+                r = check_greynoise("1.2.3.4")
+        self.assertEqual(r["veredicto"], "SIN ACTIVIDAD")
+
+    def test_community_falla_usa_endpoint_riot(self):
+        """
+        Si el endpoint community falla, debe intentar RIOT.
+        RIOT contiene IPs conocidas como benignas (Google, Cloudflare, etc.)
+        """
+        from agente import check_greynoise
+        respuesta_riot = {
+            "riot":        True,
+            "name":        "Google LLC",
+            "description": "Google services",
+            "trust_level": "1"
+        }
+
+        def http_get_mock(url, headers=None, params=None):
+            if "community" in url:
+                return {"error": "Rate limit exceeded"}
+            if "riot" in url:
+                return respuesta_riot
+            return {"error": "inesperado"}
+
+        with patch("agente.http_get", side_effect=http_get_mock):
+            with patch.dict(os.environ, {"GREYNOISE_API_KEY": ""}):
+                r = check_greynoise("8.8.8.8")
+
+        self.assertEqual(r.get("fuente"), "GreyNoise RIOT")
+        self.assertEqual(r.get("veredicto"), "BENIGNO")
+
+    def test_ambas_apis_fallan_retorna_error_controlado(self):
+        """Si community y RIOT ambas fallan, debe devolver error controlado"""
+        from agente import check_greynoise
+        with patch("agente.http_get", return_value={"error": "sin conexión"}):
+            with patch.dict(os.environ, {"GREYNOISE_API_KEY": ""}):
+                r = check_greynoise("1.2.3.4")
+        self.assertIn("error", r)
+        self.assertEqual(r.get("fuente"), "GreyNoise")
+
+    def test_respuesta_tiene_campos_esperados(self):
+        """La respuesta exitosa debe incluir fuente, ip, veredicto y contexto"""
+        from agente import check_greynoise
+        with patch("agente.http_get",
+                   return_value=self._resp_community(clasificacion="malicious")):
+            with patch.dict(os.environ, {"GREYNOISE_API_KEY": ""}):
+                r = check_greynoise("1.2.3.4")
+        for campo in ["fuente", "ip", "veredicto", "clasificacion", "contexto"]:
+            self.assertIn(campo, r, f"Falta campo '{campo}' en la respuesta")
+
+    def test_con_api_key_pasa_header_de_autenticacion(self):
+        """Con GREYNOISE_API_KEY, debe pasar el header 'key' en la petición"""
+        from agente import check_greynoise
+        llamadas = []
+
+        def http_get_captura(url, headers=None, params=None):
+            llamadas.append({"url": url, "headers": headers or {}})
+            return self._resp_community()
+
+        with patch("agente.http_get", side_effect=http_get_captura):
+            with patch.dict(os.environ, {"GREYNOISE_API_KEY": "mi-key-secreta"}):
+                check_greynoise("1.2.3.4")
+
+        self.assertGreater(len(llamadas), 0)
+        self.assertIn("key", llamadas[0]["headers"],
+                      "Con API key debe pasar el header 'key'")
+
+
+# ═══════════════════════════════════════════════════════════
+#  BLOQUE 15: check_urlscan
+#  ¿El análisis con URLScan.io maneja correctamente los tres
+#  escenarios: escaneo nuevo, resultado previo y sin datos?
+# ═══════════════════════════════════════════════════════════
+
+class TestCheckURLScan(unittest.TestCase):
+    """
+    check_urlscan tiene 3 ramas principales:
+    1. Sin API key + sin resultados previos   → SIN DATOS
+    2. Sin API key + resultados previos        → usa escaneo previo
+    3. Con API key                             → envía escaneo nuevo
+    """
+
+    def _resultado_previo_fake(self, malicious=False, score=0, pais="US"):
+        """Helper: simula un resultado previo de URLScan"""
+        return {
+            "_id":  "abc123",
+            "page": {
+                "url":     "https://ejemplo.com",
+                "title":   "Ejemplo",
+                "country": pais,
+                "ip":      "1.2.3.4"
+            },
+            "verdicts": {
+                "overall": {"malicious": malicious, "score": score}
+            }
+        }
+
+    def test_url_vacia_retorna_error(self):
+        """URL vacía debe devolver error controlado sin crashear"""
+        from agente import check_urlscan
+        with patch("agente.http_get", return_value={"results": []}):
+            r = check_urlscan("")
+        self.assertIn("error", r)
+
+    def test_sin_key_sin_previos_da_sin_datos(self):
+        """Sin API key y sin escaneos previos → veredicto SIN DATOS"""
+        from agente import check_urlscan
+        with patch("agente.http_get", return_value={"results": []}):
+            with patch.dict(os.environ, {"URLSCAN_API_KEY": ""}):
+                r = check_urlscan("https://sitio-nuevo.com")
+        self.assertEqual(r.get("veredicto"), "SIN DATOS")
+        self.assertIn("fuente", r)
+        self.assertIn("url", r)
+
+    def test_usa_resultado_previo_cuando_no_hay_key(self):
+        """Sin API key pero con escaneo previo, debe usar ese resultado"""
+        from agente import check_urlscan
+        previo = self._resultado_previo_fake()
+        with patch("agente.http_get", return_value={"results": [previo]}):
+            with patch.dict(os.environ, {"URLSCAN_API_KEY": ""}):
+                r = check_urlscan("https://sitio.com")
+        self.assertIn("previo", r.get("fuente", "").lower(),
+                      "La fuente debe indicar que es un escaneo previo")
+
+    def test_resultado_previo_malicioso_da_peligroso(self):
+        """Escaneo previo con malicious=True → veredicto PELIGROSO"""
+        from agente import check_urlscan
+        previo = self._resultado_previo_fake(malicious=True)
+        with patch("agente.http_get", return_value={"results": [previo]}):
+            with patch.dict(os.environ, {"URLSCAN_API_KEY": ""}):
+                r = check_urlscan("https://sitio-malo.com")
+        self.assertEqual(r.get("veredicto"), "PELIGROSO")
+
+    def test_resultado_previo_score_alto_da_revisar(self):
+        """Escaneo previo con score > 30 pero no malicioso → veredicto REVISAR"""
+        from agente import check_urlscan
+        previo = self._resultado_previo_fake(malicious=False, score=50)
+        with patch("agente.http_get", return_value={"results": [previo]}):
+            with patch.dict(os.environ, {"URLSCAN_API_KEY": ""}):
+                r = check_urlscan("https://sitio-sospechoso.com")
+        self.assertEqual(r.get("veredicto"), "REVISAR")
+
+    def test_url_sin_https_no_crashea(self):
+        """URL sin esquema https:// se completa automáticamente y no crashea"""
+        from agente import check_urlscan
+        with patch("agente.http_get", return_value={"results": []}):
+            with patch.dict(os.environ, {"URLSCAN_API_KEY": ""}):
+                r = check_urlscan("sitio-sin-esquema.com")
+        self.assertIsInstance(r, dict)
+
+    def test_con_api_key_envia_escaneo_nuevo(self):
+        """Con API key, debe enviar POST y devolver resultados del escaneo en vivo"""
+        from agente import check_urlscan
+        busqueda_vacia = {"results": []}
+
+        scan_response = MagicMock()
+        scan_response.json.return_value = {"uuid": "uuid-test-123"}
+
+        resultado_escaneo = {
+            "page": {
+                "url":     "https://sitio.com",
+                "title":   "Sitio de Prueba",
+                "server":  "nginx",
+                "country": "US",
+                "ip":      "1.2.3.4"
+            },
+            "verdicts": {"overall": {"malicious": False, "score": 10}},
+            "lists":    {},
+            "meta":     {"processors": {"wappa": {"data": []}}}
+        }
+
+        def http_get_mock(url, headers=None, params=None):
+            if "search" in url:
+                return busqueda_vacia
+            if "result" in url:
+                return resultado_escaneo
+            return {"error": "inesperado"}
+
+        with patch("agente.http_get", side_effect=http_get_mock):
+            with patch("agente.requests.post", return_value=scan_response):
+                with patch("agente.time.sleep"):  # evitar la espera de 12s
+                    with patch.dict(os.environ, {"URLSCAN_API_KEY": "fake-key"}):
+                        r = check_urlscan("https://sitio.com")
+
+        self.assertIn("fuente", r)
+        self.assertNotIn("error", r)
+        self.assertIn("vivo", r.get("fuente", "").lower(),
+                      "La fuente debe indicar que es un escaneo en vivo")
+
+    def test_estructura_siempre_tiene_campos_clave(self):
+        """El resultado siempre debe tener fuente, url y veredicto"""
+        from agente import check_urlscan
+        with patch("agente.http_get", return_value={"results": []}):
+            with patch.dict(os.environ, {"URLSCAN_API_KEY": ""}):
+                r = check_urlscan("https://cualquier.com")
+        for campo in ["fuente", "url", "veredicto"]:
+            self.assertIn(campo, r, f"Falta campo '{campo}' en resultado SIN DATOS")
+
+
+# ═══════════════════════════════════════════════════════════
+#  BLOQUE 16: check_whois
+#  ¿La consulta RDAP/WHOIS maneja correctamente dominios
+#  válidos, inválidos y errores de la API?
+# ═══════════════════════════════════════════════════════════
+
+class TestCheckWhois(unittest.TestCase):
+
+    def test_dominio_invalido_retorna_error(self):
+        """Un dominio sin formato válido debe devolver error sin llamar a la API"""
+        r = check_whois("no_es_un_dominio")
+        self.assertIn("error", r)
+
+    def test_dominio_vacio_retorna_error(self):
+        """Cadena vacía no es dominio válido → error"""
+        r = check_whois("")
+        self.assertIn("error", r)
+
+    def test_dominio_con_inyeccion_retorna_error(self):
+        """Dominio con caracteres de inyección SQL no es válido → error"""
+        r = check_whois("'; DROP TABLE dominios; --")
+        self.assertIn("error", r)
+
+    def test_respuesta_exitosa_tiene_estructura_correcta(self):
+        """Con respuesta válida de RDAP, el resultado debe tener los campos esperados"""
+        respuesta_rdap = {
+            "ldhName": "GOOGLE.COM",
+            "status":  [{"value": "active"},
+                        {"value": "clientTransferProhibited"}]
+        }
+        with patch("agente.http_get", return_value=respuesta_rdap):
+            r = check_whois("google.com")
+        for campo in ["fuente", "dominio", "nombre", "estados"]:
+            self.assertIn(campo, r, f"Falta campo '{campo}' en resultado WHOIS")
+
+    def test_estados_siempre_es_lista(self):
+        """El campo 'estados' siempre debe ser una lista, incluso si está vacío"""
+        respuesta_rdap = {"ldhName": "EJEMPLO.COM", "status": []}
+        with patch("agente.http_get", return_value=respuesta_rdap):
+            r = check_whois("ejemplo.com")
+        self.assertIsInstance(r.get("estados"), list,
+                              "'estados' debe ser una lista")
+
+    def test_api_falla_propaga_error(self):
+        """Si rdap.org falla, el error debe aparecer en el resultado"""
+        with patch("agente.http_get", return_value={"error": "Timeout"}):
+            r = check_whois("google.com")
+        self.assertIn("error", r)
+
+
+# ═══════════════════════════════════════════════════════════
+#  BLOQUE 17: verificar_ssl — camino feliz y alertas
+#  Los tests existentes solo cubren errores de conexión.
+#  Aquí probamos que la lectura y análisis del certificado
+#  funciona correctamente con un cert válido mockeado.
+# ═══════════════════════════════════════════════════════════
+
+class TestVerificarSSLCaminoFeliz(unittest.TestCase):
+    """
+    Probamos verificar_ssl con certificados mockeados para
+    verificar que las alertas se generan según la antigüedad,
+    fecha de expiración y emisor del certificado.
+    """
+
+    def _construir_cert(self, dias_activo, dias_vence,
+                        emisor="DigiCert Inc", cn="google.com"):
+        """Crea un cert mock en el formato exacto que espera verificar_ssl"""
+        from datetime import datetime, timezone, timedelta
+        ahora  = datetime.now(timezone.utc)
+        inicio = ahora - timedelta(days=dias_activo)
+        fin    = ahora + timedelta(days=dias_vence)
+        fmt    = "%b %d %H:%M:%S %Y"
+        return {
+            "notBefore":      inicio.strftime(fmt) + " GMT",
+            "notAfter":       fin.strftime(fmt) + " GMT",
+            "issuer":         [[("organizationName", emisor)]],
+            "subject":        [[("commonName", cn)]],
+            "subjectAltName": [("DNS", cn), ("DNS", f"www.{cn}")]
+        }
+
+    def _mock_ssl_ok(self, cert):
+        """Configura mocks de socket/ssl para simular conexión SSL exitosa"""
+        mock_ssock = MagicMock()
+        mock_ssock.getpeercert.return_value = cert
+
+        mock_ctx = MagicMock()
+        mock_ctx.wrap_socket.return_value.__enter__.return_value = mock_ssock
+
+        mock_sock = MagicMock()
+        return mock_ctx, mock_sock
+
+    def test_certificado_valido_retorna_valido_true(self):
+        """Con cert SSL válido, la función debe retornar valido=True"""
+        cert = self._construir_cert(dias_activo=180, dias_vence=60)
+        mock_ctx, mock_sock = self._mock_ssl_ok(cert)
+
+        with patch("agente.ssl.create_default_context", return_value=mock_ctx):
+            with patch("agente.socket.create_connection", return_value=mock_sock):
+                from agente import verificar_ssl
+                r = verificar_ssl("https://google.com")
+
+        self.assertTrue(r.get("valido"), "Con cert correcto, 'valido' debe ser True")
+        self.assertIn("fuente", r)
+        self.assertIn("dias_activo", r)
+
+    def test_certificado_muy_nuevo_genera_alerta(self):
+        """Cert con menos de 30 días de vida → alerta de certificado nuevo"""
+        cert = self._construir_cert(dias_activo=5, dias_vence=360)
+        mock_ctx, mock_sock = self._mock_ssl_ok(cert)
+
+        with patch("agente.ssl.create_default_context", return_value=mock_ctx):
+            with patch("agente.socket.create_connection", return_value=mock_sock):
+                from agente import verificar_ssl
+                r = verificar_ssl("https://phishing-reciente.com")
+
+        alertas = " ".join(r.get("alertas_ssl", []))
+        self.assertIn("nuevo", alertas.lower(),
+                      "Cert muy reciente debe generar alerta con 'nuevo'")
+
+    def test_certificado_por_vencer_genera_alerta(self):
+        """Cert que expira en menos de 15 días → alerta de expiración"""
+        cert = self._construir_cert(dias_activo=350, dias_vence=7)
+        mock_ctx, mock_sock = self._mock_ssl_ok(cert)
+
+        with patch("agente.ssl.create_default_context", return_value=mock_ctx):
+            with patch("agente.socket.create_connection", return_value=mock_sock):
+                from agente import verificar_ssl
+                r = verificar_ssl("https://sitio-expirando.com")
+
+        alertas = " ".join(r.get("alertas_ssl", []))
+        self.assertIn("vence", alertas.lower(),
+                      "Cert por vencer debe generar alerta con 'vence'")
+
+    def test_letsencrypt_genera_alerta_informativa(self):
+        """Let's Encrypt como emisor → alerta de certificado gratuito automático"""
+        cert = self._construir_cert(dias_activo=60, dias_vence=30,
+                                    emisor="Let's Encrypt")
+        mock_ctx, mock_sock = self._mock_ssl_ok(cert)
+
+        with patch("agente.ssl.create_default_context", return_value=mock_ctx):
+            with patch("agente.socket.create_connection", return_value=mock_sock):
+                from agente import verificar_ssl
+                r = verificar_ssl("https://sitio-con-letsencrypt.com")
+
+        alertas = " ".join(r.get("alertas_ssl", []))
+        self.assertIn("gratuito", alertas.lower(),
+                      "Let's Encrypt debe generar alerta de cert gratuito")
+
+    def test_resultado_exitoso_tiene_todos_los_campos(self):
+        """Con cert válido, el resultado debe incluir todos los campos clave"""
+        cert = self._construir_cert(dias_activo=200, dias_vence=165)
+        mock_ctx, mock_sock = self._mock_ssl_ok(cert)
+
+        with patch("agente.ssl.create_default_context", return_value=mock_ctx):
+            with patch("agente.socket.create_connection", return_value=mock_sock):
+                from agente import verificar_ssl
+                r = verificar_ssl("https://google.com")
+
+        campos = ["fuente", "dominio", "valido", "emitido_por",
+                  "dias_activo", "dias_para_vencer", "alertas_ssl", "nota"]
+        for campo in campos:
+            self.assertIn(campo, r, f"Falta campo '{campo}' en resultado SSL exitoso")
+
+
+# ═══════════════════════════════════════════════════════════
+#  BLOQUE 18: buscar_cves — casos límite
+#  ¿La función maneja CVEs sin métricas CVSS, resultados
+#  vacíos, descripciones en otro idioma y errores de API?
+# ═══════════════════════════════════════════════════════════
+
+class TestBuscarCVESCasosLimite(unittest.TestCase):
+
+    def test_sin_vulnerabilidades_retorna_lista_vacia(self):
+        """Si la API no devuelve CVEs, vulnerabilidades debe ser lista vacía"""
+        respuesta_vacia = {"totalResults": 0, "vulnerabilities": []}
+        with patch("agente.http_get", return_value=respuesta_vacia):
+            resultado = buscar_cves("software-inexistente", "9.9.9")
+        self.assertEqual(resultado["total"], 0)
+        self.assertEqual(resultado["vulnerabilidades"], [])
+
+    def test_cve_sin_metricas_cvss_usa_na(self):
+        """
+        CVE sin métricas CVSS v3.1 (muchos CVEs antiguos) debe
+        usar 'N/A' para score y severidad en lugar de crashear.
+        """
+        respuesta = {
+            "totalResults": 1,
+            "vulnerabilities": [{
+                "cve": {
+                    "id": "CVE-2019-0001",
+                    "descriptions": [{"lang": "en", "value": "Vulnerabilidad antigua"}],
+                    "metrics": {}   # sin cvssMetricV31
+                }
+            }]
+        }
+        with patch("agente.http_get", return_value=respuesta):
+            resultado = buscar_cves("software-viejo")
+        vuln = resultado["vulnerabilidades"][0]
+        self.assertEqual(vuln["score"],     "N/A")
+        self.assertEqual(vuln["severidad"], "N/A")
+
+    def test_cve_sin_descripcion_en_ingles_usa_fallback(self):
+        """
+        CVE sin descripción en inglés (solo en otros idiomas) debe
+        usar 'Sin descripción' en lugar de lanzar StopIteration.
+        """
+        respuesta = {
+            "totalResults": 1,
+            "vulnerabilities": [{
+                "cve": {
+                    "id": "CVE-2020-0001",
+                    "descriptions": [{"lang": "es",
+                                      "value": "Descripción solo en español"}],
+                    "metrics": {}
+                }
+            }]
+        }
+        with patch("agente.http_get", return_value=respuesta):
+            resultado = buscar_cves("software-test")
+        self.assertEqual(resultado["vulnerabilidades"][0]["descripcion"],
+                         "Sin descripción")
+
+    def test_api_error_se_propaga_en_resultado(self):
+        """Si la API de NVD falla, el error debe aparecer en el resultado"""
+        with patch("agente.http_get", return_value={"error": "Timeout"}):
+            resultado = buscar_cves("apache", "2.4.0")
+        self.assertIn("error", resultado)
+
+    def test_version_es_opcional_no_crashea(self):
+        """buscar_cves llamado sin versión no debe crashear"""
+        respuesta = {"totalResults": 0, "vulnerabilities": []}
+        with patch("agente.http_get", return_value=respuesta):
+            resultado = buscar_cves("nginx")   # sin version
+        self.assertIsInstance(resultado, dict)
+        self.assertNotIn("error", resultado)
+
+
+# ═══════════════════════════════════════════════════════════
+#  BLOQUE 19: cobertura complementaria
+#  Tests para ramas sin cobertura previa:
+#  VirusTotal con dominios y hashes, reglas 7 y 8 del detector
+#  de phishing, dispatcher con más herramientas, y http_get.
+# ═══════════════════════════════════════════════════════════
+
+class TestCoberturaComplementaria(unittest.TestCase):
+
+    # ── VirusTotal: tipos de target no probados ──────────────
+
+    def test_virustotal_acepta_dominios(self):
+        """check_virustotal debe funcionar con dominios, no solo IPs"""
+        respuesta = {"data": {"attributes": {"last_analysis_stats":
+            {"malicious": 0, "suspicious": 0, "undetected": 80, "harmless": 0}}}}
+        with patch("agente.http_get", return_value=respuesta):
+            with patch.dict(os.environ, {"VIRUSTOTAL_API_KEY": "fake"}):
+                r = check_virustotal("malware-domain.com")
+        self.assertNotIn("error", r)
+        self.assertEqual(r["veredicto"], "LIMPIO")
+
+    def test_virustotal_acepta_hashes_sha256(self):
+        """check_virustotal debe funcionar con hashes SHA-256"""
+        respuesta = {"data": {"attributes": {"last_analysis_stats":
+            {"malicious": 60, "suspicious": 3, "undetected": 20, "harmless": 0}}}}
+        with patch("agente.http_get", return_value=respuesta):
+            with patch.dict(os.environ, {"VIRUSTOTAL_API_KEY": "fake"}):
+                r = check_virustotal(
+                    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                )
+        self.assertEqual(r["veredicto"], "PELIGROSO")
+
+    def test_virustotal_tipo_url_no_soportado_retorna_error(self):
+        """check_virustotal no soporta URLs directamente → error descriptivo"""
+        with patch.dict(os.environ, {"VIRUSTOTAL_API_KEY": "fake"}):
+            r = check_virustotal("https://malware.com/archivo.exe")
+        self.assertIn("error", r)
+        self.assertIn("url", r["error"].lower())
+
+    # ── Reglas de phishing sin cobertura previa ──────────────
+
+    def test_phishing_regla7_dominio_raiz_muy_largo(self):
+        """
+        Regla 7: dominio raíz con más de 20 caracteres genera alerta.
+        Dominios legítimos rara vez son tan largos.
+        """
+        url = "https://este-dominio-raiz-es-extremadamente-largo.com/login"
+        r = analizar_url_phishing(url)
+        alertas = " ".join(r["alertas"])
+        self.assertIn("largo", alertas.lower(),
+                      "Dominio raíz muy largo debe generar alerta")
+
+    def test_phishing_regla8_caracteres_especiales_en_dominio(self):
+        """
+        Regla 8: caracteres no estándar en el dominio (ej. @ de credenciales)
+        deben generar alerta de posible homoglyph attack.
+        """
+        # La '@' en la URL es interpretada como credenciales en netloc
+        # lo que resulta en un dominio con '@' detectado por [^\w\-\.]
+        url = "https://pay@pal-seguro.com/verify"
+        r = analizar_url_phishing(url)
+        alertas = " ".join(r["alertas"])
+        self.assertIn("homoglyph", alertas.lower(),
+                      "Caracteres especiales en el dominio deben generar alerta")
+
+    def test_phishing_positivos_cuando_marca_coincide_con_dominio_raiz(self):
+        """
+        Cuando la marca coincide con el dominio raíz (sitio legítimo),
+        debe aparecer en 'positivos', no disparar una ALERTA CRITICA.
+        """
+        r = analizar_url_phishing("https://www.paypal.com/login")
+        positivos = " ".join(r.get("positivos", []))
+        self.assertIn("paypal", positivos.lower(),
+                      "paypal.com debe aparecer como marca coincidente en positivos")
+        alertas_criticas = [a for a in r["alertas"] if "CRITICA" in a]
+        self.assertEqual(len(alertas_criticas), 0)
+
+    # ── ejecutar_herramienta con herramientas no probadas ────
+
+    def test_ejecutar_herramienta_buscar_cves(self):
+        """El dispatcher debe despachar correctamente a buscar_cves"""
+        respuesta = {"totalResults": 0, "vulnerabilities": []}
+        with patch("agente.http_get", return_value=respuesta):
+            r = ejecutar_herramienta("buscar_cves",
+                                     {"software": "nginx", "version": "1.0"})
+        self.assertIsInstance(r, dict)
+        self.assertNotIn("error", r)
+
+    def test_ejecutar_herramienta_analizar_url_phishing(self):
+        """El dispatcher debe despachar a analizar_url_phishing"""
+        r = ejecutar_herramienta("analizar_url_phishing",
+                                 {"url": "https://test.com"})
+        self.assertIsInstance(r, dict)
+        self.assertIn("veredicto_url", r)
+
+    def test_ejecutar_herramienta_check_greynoise(self):
+        """El dispatcher debe despachar correctamente a check_greynoise"""
+        from agente import check_greynoise  # asegurar disponibilidad
+        respuesta_gn = {
+            "classification": "benign", "noise": False,
+            "riot": True, "name": "Google"
+        }
+        with patch("agente.http_get", return_value=respuesta_gn):
+            with patch.dict(os.environ, {"GREYNOISE_API_KEY": ""}):
+                r = ejecutar_herramienta("check_greynoise", {"ip": "8.8.8.8"})
+        self.assertIsInstance(r, dict)
+
+    def test_ejecutar_herramienta_verificar_redireccion(self):
+        """El dispatcher debe despachar a verificar_redireccion"""
+        mock_resp = MagicMock()
+        mock_resp.url        = "https://google.com/"
+        mock_resp.status_code = 200
+        mock_resp.history    = []
+        with patch("agente.requests.head", return_value=mock_resp):
+            r = ejecutar_herramienta("verificar_redireccion",
+                                     {"url": "https://google.com"})
+        self.assertIsInstance(r, dict)
+        self.assertNotIn("error", r)
+
+    # ── http_get: manejo directo de errores ──────────────────
+
+    def test_http_get_timeout_retorna_dict_con_error(self):
+        """http_get debe capturar Timeout y devolver {'error': '...'}"""
+        from agente import http_get
+        import requests as req
+        with patch("agente.requests.get",
+                   side_effect=req.exceptions.Timeout("timeout")):
+            r = http_get("https://api-lenta.com/datos")
+        self.assertIn("error", r)
+        self.assertIsInstance(r["error"], str)
+
+    def test_http_get_excepcion_generica_trunca_mensaje(self):
+        """http_get captura cualquier excepción y trunca el mensaje a 100 chars"""
+        from agente import http_get
+        mensaje_largo = "error inesperado " + "x" * 200
+        with patch("agente.requests.get", side_effect=Exception(mensaje_largo)):
+            r = http_get("https://api.com/datos")
+        self.assertIn("error", r)
+        self.assertLessEqual(len(r["error"]), 100,
+                             "El mensaje de error debe estar truncado a 100 chars")
+
+
+# ═══════════════════════════════════════════════════════════
 #  RUNNER PERSONALIZADO
 #  Muestra los resultados de forma bonita y clara
 # ═══════════════════════════════════════════════════════════
@@ -1434,11 +2085,17 @@ if __name__ == "__main__":
         ("BLOQUE 6: Inputs Maliciosos",        TestInputsMaliciosos),
         ("BLOQUE 7: Lógica de Negocio",        TestLogicaDeNegocio),
         ("BLOQUE 8: Estructura Respuestas",    TestEstructuraRespuestas),
-        ("BLOQUE 9: buscar_subdominios",       TestBuscarSubdominios),
-        ("BLOQUE 10: verificar_ssl",           TestVerificarSSL),
-        ("BLOQUE 11: verificar_redireccion",   TestVerificarRedireccion),
-        ("BLOQUE 12: reportes e historial",    TestGuardarReporteYHistorial),
-        ("BLOQUE 13: validar_url (opción 2)",  TestValidarURL),
+        ("BLOQUE 9: buscar_subdominios",              TestBuscarSubdominios),
+        ("BLOQUE 10: verificar_ssl (errores)",        TestVerificarSSL),
+        ("BLOQUE 11: verificar_redireccion",          TestVerificarRedireccion),
+        ("BLOQUE 12: reportes e historial",           TestGuardarReporteYHistorial),
+        ("BLOQUE 13: validar_url (opción 2)",         TestValidarURL),
+        ("BLOQUE 14: check_greynoise",                TestCheckGreynoise),
+        ("BLOQUE 15: check_urlscan",                  TestCheckURLScan),
+        ("BLOQUE 16: check_whois",                    TestCheckWhois),
+        ("BLOQUE 17: verificar_ssl (camino feliz)",   TestVerificarSSLCaminoFeliz),
+        ("BLOQUE 18: buscar_cves (casos límite)",     TestBuscarCVESCasosLimite),
+        ("BLOQUE 19: cobertura complementaria",       TestCoberturaComplementaria),
     ]
 
     total_ok  = 0
